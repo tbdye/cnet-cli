@@ -250,3 +250,40 @@ void json_error(const char *msg)
     json_obj_close(&js);
     json_finish(&js);
 }
+
+/* ---- warning collection ---- */
+
+static char g_warnings[WARN_MAX][WARN_MSG_SIZE];
+static int  g_warn_count = 0;
+
+void warn_clear(void)
+{
+    g_warn_count = 0;
+}
+
+void warn_add(const char *msg)
+{
+    if (g_warn_count >= WARN_MAX)
+        return;
+    strncpy(g_warnings[g_warn_count], msg,
+        WARN_MSG_SIZE - 1);
+    g_warnings[g_warn_count][WARN_MSG_SIZE - 1] = '\0';
+    g_warn_count++;
+}
+
+void warn_emit(struct json_state *js)
+{
+    int i;
+    if (g_warn_count == 0)
+        return;
+    json_key(js, "warnings");
+    json_arr_open(js);
+    for (i = 0; i < g_warn_count; i++)
+        json_str(js, g_warnings[i]);
+    json_arr_close(js);
+}
+
+int warn_count(void)
+{
+    return g_warn_count;
+}

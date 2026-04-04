@@ -475,10 +475,14 @@ int cmd_user_edit(struct MainPort *myp, int argc, char **argv)
     {
         struct PortData *online_z = IsNowOnLine(myp, account);
         if (online_z) {
-            fprintf(stderr,
-                "{\"warning\":\"User is online on port %d"
-                " -- changes may be overwritten at logoff\"}\n",
-                (int)online_z->InPort);
+            {
+                char wbuf[128];
+                snprintf(wbuf, sizeof(wbuf),
+                    "User is online on port %d"
+                    " -- changes may be overwritten at logoff",
+                    (int)online_z->InPort);
+                warn_add(wbuf);
+            }
         }
     }
 
@@ -571,6 +575,7 @@ int cmd_user_edit(struct MainPort *myp, int argc, char **argv)
             " to update user list cache");
     }
 
+    warn_emit(&js);
     json_obj_close(&js);
     json_finish(&js);
 

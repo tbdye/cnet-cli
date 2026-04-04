@@ -1059,8 +1059,8 @@ static int init_cnet(void)
     CNetMailBase = (struct Library *)OpenLibrary(
         (CONST_STRPTR)"cnetmail.library", 0);
     if (!CNetMailBase) {
-        fprintf(stderr, "Warning: cannot open cnetmail.library"
-                        " (mail send/reply unavailable)\n");
+        warn_add("Cannot open cnetmail.library"
+            " (mail send/reply unavailable)");
     }
 
     /*
@@ -1071,8 +1071,8 @@ static int init_cnet(void)
     RexxSysBase = (struct RxsLib *)OpenLibrary(
         (CONST_STRPTR)"rexxsyslib.library", 0);
     if (!RexxSysBase) {
-        fprintf(stderr, "Warning: cannot open rexxsyslib.library"
-                        " (arexx/port commands unavailable)\n");
+        warn_add("Cannot open rexxsyslib.library"
+            " (arexx/port commands unavailable)");
     }
 
     return 0;
@@ -1101,6 +1101,8 @@ int main(int argc, char **argv)
 {
     const struct command *cmd;
     int rc;
+
+    warn_clear();
 
     if (argc < 2) {
         print_usage();

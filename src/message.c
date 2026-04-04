@@ -1163,6 +1163,51 @@ static int write_message3_record(const char *data_path,
     return (written == (long)sizeof(struct MessageType3)) ? 0 : -1;
 }
 
+/*
+ * Read text content from an AmigaOS file path.
+ * Returns a malloc'd buffer on success (caller must free), or NULL on failure.
+ * Sets *out_len to the number of bytes read (not including null terminator).
+ * Maximum file size: 65536 bytes.
+ */
+static char *read_text_file(const char *path, long *out_len)
+{
+    BPTR fh;
+    long size;
+    char *buf;
+    long nread;
+
+    fh = Open((CONST_STRPTR)path, MODE_OLDFILE);
+    if (!fh)
+        return NULL;
+
+    /* Seek to end to get size. */
+    Seek(fh, 0, OFFSET_END);
+    size = Seek(fh, 0, OFFSET_BEGINNING);
+    if (size < 0 || size > 65536) {
+        Close(fh);
+        return NULL;
+    }
+
+    buf = (char *)malloc((size_t)size + 1);
+    if (!buf) {
+        Close(fh);
+        return NULL;
+    }
+
+    nread = Read(fh, buf, size);
+    Close(fh);
+
+    if (nread < 0) {
+        free(buf);
+        return NULL;
+    }
+
+    buf[nread] = '\0';
+    if (out_len)
+        *out_len = nread;
+    return buf;
+}
+
 /* ---- msg post ---- */
 
 int cmd_msg_post(struct MainPort *myp, int argc, char **argv)
@@ -1193,10 +1238,13 @@ int cmd_msg_post(struct MainPort *myp, int argc, char **argv)
     int i;
     int loaded = 0;
     int sem_held = 0;
+    const char *file_arg = NULL;
+    char *file_buf = NULL;
 
     if (argc < 2) {
         json_error("Usage: cnet-cli msg post <sub-id|gokey> "
-            "--title \"...\" --author <account> --text \"...\" "
+            "--title \"...\" --author <account> "
+            "--text \"...\" | --file <path> "
             "[--to <account>]");
         return 1;
     }
@@ -1213,25 +1261,38 @@ int cmd_msg_post(struct MainPort *myp, int argc, char **argv)
             i++;
             to_str = argv[i];
         } else if (strcmp(argv[i], "--text") == 0 && i + 1 < argc) {
-            /*
-             * Note: --text is limited by the AmigaOS command-line
-             * length (typically 512 bytes for CLI, 4096 for shell).
-             * For longer messages, a --file <path> option could be
-             * added in a future phase to read text from a file.
-             */
             i++;
             text_arg = argv[i];
+        } else if (strcmp(argv[i], "--file") == 0 && i + 1 < argc) {
+            i++;
+            file_arg = argv[i];
         }
     }
 
+    if (text_arg && file_arg) {
+        json_error("Cannot use both --text and --file");
+        free(file_buf);
+        return 1;
+    }
+    if (file_arg) {
+        file_buf = read_text_file(file_arg, NULL);
+        if (!file_buf) {
+            json_error("Failed to read --file");
+            return 1;
+        }
+        text_arg = file_buf;
+    }
+
     if (!title || !author_str || !text_arg) {
-        json_error("Required: --title, --author, --text");
+        json_error("Required: --title, --author, --text (or --file)");
+        free(file_buf);
         return 1;
     }
 
     author_acct = (short)atol(author_str);
     if (author_acct < 1) {
         json_error("Invalid --author account number");
+        free(file_buf);
         return 1;
     }
 
@@ -1239,6 +1300,7 @@ int cmd_msg_post(struct MainPort *myp, int argc, char **argv)
         to_acct = (short)atol(to_str);
         if (to_acct < 1) {
             json_error("Invalid --to account number");
+            free(file_buf);
             return 1;
         }
     }
@@ -1246,6 +1308,7 @@ int cmd_msg_post(struct MainPort *myp, int argc, char **argv)
     physnum = resolve_subboard(myp, argv[1]);
     if (physnum < 0) {
         json_error("Subboard not found");
+        free(file_buf);
         return 1;
     }
 
@@ -1254,6 +1317,7 @@ int cmd_msg_post(struct MainPort *myp, int argc, char **argv)
     if (physnum >= (short)myp->ns) {
         ReleaseSemaphore(&myp->SEM[5]);
         json_error("Subboard number out of range");
+        free(file_buf);
         return 1;
     }
     sub = &myp->Subboard[physnum];
@@ -1261,6 +1325,7 @@ int cmd_msg_post(struct MainPort *myp, int argc, char **argv)
     if (marker_base != MRK_MSG_BASE) {
         ReleaseSemaphore(&myp->SEM[5]);
         json_error("Subboard is not a message base");
+        free(file_buf);
         return 1;
     }
     ReleaseSemaphore(&myp->SEM[5]);
@@ -1285,6 +1350,7 @@ int cmd_msg_post(struct MainPort *myp, int argc, char **argv)
     /* Validate that the author account was found. */
     if (author_id == 0) {
         json_error("Author account not found");
+        free(file_buf);
         return 1;
     }
 
@@ -1310,6 +1376,7 @@ int cmd_msg_post(struct MainPort *myp, int argc, char **argv)
     /* Load subboard data. */
     if (!OneMoreUser(sub, (UBYTE)0)) {
         json_error("OneMoreUser failed (cannot load subboard data)");
+        free(file_buf);
         return 1;
     }
     loaded = 1;
@@ -1404,6 +1471,7 @@ sem_release:
 
     if (loaded)
         OneLessUser(sub);
+    free(file_buf);
     return rc;
 }
 
@@ -1440,10 +1508,13 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
     int i;
     int loaded = 0;
     int sem_held = 0;
+    const char *file_arg = NULL;
+    char *file_buf = NULL;
 
     if (argc < 3) {
         json_error("Usage: cnet-cli msg respond <sub-id|gokey> "
-            "<item-number> --author <account> --text \"...\" "
+            "<item-number> --author <account> "
+            "--text \"...\" | --file <path> "
             "[--to <account>]");
         return 1;
     }
@@ -1463,20 +1534,38 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
             i++;
             to_str = argv[i];
         } else if (strcmp(argv[i], "--text") == 0 && i + 1 < argc) {
-            /* See cmd_msg_post for --text length limitation note. */
             i++;
             text_arg = argv[i];
+        } else if (strcmp(argv[i], "--file") == 0 && i + 1 < argc) {
+            i++;
+            file_arg = argv[i];
         }
     }
 
+    if (text_arg && file_arg) {
+        json_error("Cannot use both --text and --file");
+        free(file_buf);
+        return 1;
+    }
+    if (file_arg) {
+        file_buf = read_text_file(file_arg, NULL);
+        if (!file_buf) {
+            json_error("Failed to read --file");
+            return 1;
+        }
+        text_arg = file_buf;
+    }
+
     if (!author_str || !text_arg) {
-        json_error("Required: --author, --text");
+        json_error("Required: --author, --text (or --file)");
+        free(file_buf);
         return 1;
     }
 
     author_acct = (short)atol(author_str);
     if (author_acct < 1) {
         json_error("Invalid --author account number");
+        free(file_buf);
         return 1;
     }
 
@@ -1484,6 +1573,7 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
         to_acct = (short)atol(to_str);
         if (to_acct < 1) {
             json_error("Invalid --to account number");
+            free(file_buf);
             return 1;
         }
     }
@@ -1491,6 +1581,7 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
     physnum = resolve_subboard(myp, argv[1]);
     if (physnum < 0) {
         json_error("Subboard not found");
+        free(file_buf);
         return 1;
     }
 
@@ -1499,6 +1590,7 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
     if (physnum >= (short)myp->ns) {
         ReleaseSemaphore(&myp->SEM[5]);
         json_error("Subboard number out of range");
+        free(file_buf);
         return 1;
     }
     sub = &myp->Subboard[physnum];
@@ -1506,6 +1598,7 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
     if (marker_base != MRK_MSG_BASE) {
         ReleaseSemaphore(&myp->SEM[5]);
         json_error("Subboard is not a message base");
+        free(file_buf);
         return 1;
     }
     ReleaseSemaphore(&myp->SEM[5]);
@@ -1530,6 +1623,7 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
     /* Validate that the author account was found. */
     if (author_id == 0) {
         json_error("Author account not found");
+        free(file_buf);
         return 1;
     }
 
@@ -1555,6 +1649,7 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
     /* Load subboard data. */
     if (!OneMoreUser(sub, (UBYTE)0)) {
         json_error("OneMoreUser failed (cannot load subboard data)");
+        free(file_buf);
         return 1;
     }
     loaded = 1;
@@ -1624,10 +1719,14 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
                 writ = Write(fh, (APTR)&old_hdr,
                     (long)sizeof(struct HeaderType));
                 if (writ != (long)sizeof(struct HeaderType)) {
-                    fprintf(stderr,
-                        "warning: linked-list patch write failed "
-                        "(old_last=%ld, wrote=%ld)\n",
-                        old_last, writ);
+                    {
+                        char wbuf[128];
+                        snprintf(wbuf, sizeof(wbuf),
+                            "Linked-list patch write failed "
+                            "(old_last=%ld, wrote=%ld)",
+                            old_last, writ);
+                        warn_add(wbuf);
+                    }
                 }
             }
             Close(fh);
@@ -1670,6 +1769,7 @@ int cmd_msg_respond(struct MainPort *myp, int argc, char **argv)
     json_kv_int(&js, "by_account", (long)author_acct);
     json_kv_int(&js, "header_offset", header_pos);
     json_kv_int(&js, "body_offset", hdr.Text);
+    warn_emit(&js);
     json_obj_close(&js);
     json_finish(&js);
 
@@ -1682,6 +1782,7 @@ sem_release:
 cleanup:
     if (loaded)
         OneLessUser(sub);
+    free(file_buf);
     return rc;
 }
 
@@ -1809,11 +1910,13 @@ int cmd_msg_edit(struct MainPort *myp, int argc, char **argv)
     int text_changed = 0;
     long response_n = 0;
     char text_path[256];
+    const char *file_arg = NULL;
+    char *file_buf = NULL;
 
     if (argc < 3) {
         json_error("Usage: cnet-cli msg edit <sub-id|gokey> "
-            "<item-number> [--text \"...\"] [--title \"...\"] "
-            "[--response N]");
+            "<item-number> [--text \"...\" | --file <path>] "
+            "[--title \"...\"] [--response N]");
         return 1;
     }
 
@@ -1835,11 +1938,29 @@ int cmd_msg_edit(struct MainPort *myp, int argc, char **argv)
                 i + 1 < argc) {
             i++;
             response_str = argv[i];
+        } else if (strcmp(argv[i], "--file") == 0 && i + 1 < argc) {
+            i++;
+            file_arg = argv[i];
         }
     }
 
+    if (text_arg && file_arg) {
+        json_error("Cannot use both --text and --file");
+        free(file_buf);
+        return 1;
+    }
+    if (file_arg) {
+        file_buf = read_text_file(file_arg, NULL);
+        if (!file_buf) {
+            json_error("Failed to read --file");
+            return 1;
+        }
+        text_arg = file_buf;
+    }
+
     if (!text_arg && !title_arg) {
-        json_error("Required: --text and/or --title");
+        json_error("Required: --text (or --file) and/or --title");
+        free(file_buf);
         return 1;
     }
 
@@ -1847,10 +1968,12 @@ int cmd_msg_edit(struct MainPort *myp, int argc, char **argv)
         response_n = atol(response_str);
         if (response_n < 1) {
             json_error("--response must be >= 1");
+            free(file_buf);
             return 1;
         }
         if (!text_arg) {
-            json_error("Required: --text for response edit");
+            json_error("Required: --text (or --file) for response edit");
+            free(file_buf);
             return 1;
         }
         /* Title is silently ignored for response edits. */
@@ -1860,6 +1983,7 @@ int cmd_msg_edit(struct MainPort *myp, int argc, char **argv)
     physnum = resolve_subboard(myp, argv[1]);
     if (physnum < 0) {
         json_error("Subboard not found");
+        free(file_buf);
         return 1;
     }
 
@@ -1868,6 +1992,7 @@ int cmd_msg_edit(struct MainPort *myp, int argc, char **argv)
     if (physnum >= (short)myp->ns) {
         ReleaseSemaphore(&myp->SEM[5]);
         json_error("Subboard number out of range");
+        free(file_buf);
         return 1;
     }
     sub = &myp->Subboard[physnum];
@@ -1875,6 +2000,7 @@ int cmd_msg_edit(struct MainPort *myp, int argc, char **argv)
     if (marker_base != MRK_MSG_BASE) {
         ReleaseSemaphore(&myp->SEM[5]);
         json_error("Subboard is not a message base");
+        free(file_buf);
         return 1;
     }
     ReleaseSemaphore(&myp->SEM[5]);
@@ -1882,6 +2008,7 @@ int cmd_msg_edit(struct MainPort *myp, int argc, char **argv)
     /* Load subboard data. */
     if (!OneMoreUser(sub, (UBYTE)0)) {
         json_error("OneMoreUser failed (cannot load subboard data)");
+        free(file_buf);
         return 1;
     }
     loaded = 1;
@@ -2168,6 +2295,7 @@ edit_cleanup:
         free(old_text);
     if (loaded)
         OneLessUser(sub);
+    free(file_buf);
     return rc;
 }
 

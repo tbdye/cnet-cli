@@ -41,6 +41,20 @@ int is_null_date(const void *date_ptr);
 void json_error(const char *msg);
 
 /*
+ * Warning collection.  Non-fatal warnings are accumulated during
+ * command execution and emitted in the success JSON response.
+ */
+#define WARN_MAX      8
+#define WARN_MSG_SIZE 128
+
+struct json_state;
+
+void warn_clear(void);
+void warn_add(const char *msg);
+void warn_emit(struct json_state *js);
+int  warn_count(void);
+
+/*
  * Return a human-readable name for a subboard marker base type.
  */
 const char *marker_type_name(int marker_base);

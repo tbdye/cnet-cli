@@ -70,7 +70,7 @@ int cmd_port_load(struct MainPort *myp, int argc, char **argv)
         snprintf(warnbuf, sizeof(warnbuf),
                  "Port %d exceeds configured HiPort (%d)",
                  port_num, (int)myp->HiPort);
-        fprintf(stderr, "Warning: %s\n", warnbuf);
+        warn_add(warnbuf);
     }
 
     /* Send RUNPORT via CONTROLREXX.1 */
@@ -91,6 +91,7 @@ int cmd_port_load(struct MainPort *myp, int argc, char **argv)
     json_kv_int(&js, "rc", (long)rc);
     json_kv_str(&js, "warning",
         "CONTROLREXX.1 commands may not take effect on CNet v5.36b");
+    warn_emit(&js);
     json_obj_close(&js);
     json_finish(&js);
 
@@ -135,7 +136,7 @@ int cmd_port_unload(struct MainPort *myp, int argc, char **argv)
         snprintf(warnbuf, sizeof(warnbuf),
                  "Port %d exceeds configured HiPort (%d)",
                  port_num, (int)myp->HiPort);
-        fprintf(stderr, "Warning: %s\n", warnbuf);
+        warn_add(warnbuf);
     }
 
     /* Warn if a user is online on this port */
@@ -144,9 +145,12 @@ int cmd_port_unload(struct MainPort *myp, int argc, char **argv)
         if (z && z != myp->z0 && z->OnLine) {
             char buf[64];
             strip_mci(buf, sizeof(buf), z->user1.Handle);
-            fprintf(stderr,
-                    "Warning: user \"%s\" is online on port %d\n",
-                    buf, port_num);
+            {
+                char wbuf[128];
+                snprintf(wbuf, sizeof(wbuf),
+                    "User \"%s\" is online on port %d", buf, port_num);
+                warn_add(wbuf);
+            }
         }
     }
 
@@ -168,6 +172,7 @@ int cmd_port_unload(struct MainPort *myp, int argc, char **argv)
     json_kv_int(&js, "rc", (long)rc);
     json_kv_str(&js, "warning",
         "CONTROLREXX.1 commands may not take effect on CNet v5.36b");
+    warn_emit(&js);
     json_obj_close(&js);
     json_finish(&js);
 

@@ -1656,9 +1656,8 @@ int cmd_mail_delete(struct MainPort *myp, int argc, char **argv)
                  * TRASHCAN has the backup. Emit warning but
                  * continue to success since data is preserved.
                  */
-                fprintf(stderr,
-                    "{\"warning\":\"Source header file may be"
-                    " corrupted after partial write\"}\n");
+                warn_add("Source header file may be corrupted"
+                    " after partial write");
             }
         }
     }
@@ -1680,6 +1679,7 @@ int cmd_mail_delete(struct MainPort *myp, int argc, char **argv)
     json_kv_int(&js, "deleted_index", (long)mail_num);
     json_kv_str(&js, "folder", folder);
     json_kv_str(&js, "account", uucp);
+    warn_emit(&js);
     json_obj_close(&js);
     json_finish(&js);
 

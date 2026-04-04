@@ -14,6 +14,7 @@ test_results*.md
 phase*_code_review*.md
 research_checklist.md
 operations_checklist.md
+backlog.md
 research/
 tools/
 tests/visual/

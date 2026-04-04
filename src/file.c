@@ -1019,10 +1019,7 @@ int cmd_file_add(struct MainPort *myp, int argc, char **argv)
      * empirically verified via a test upload.
      */
     if (desc) {
-        fprintf(stderr,
-            "Warning: --desc ignored; _Short file format is "
-            "unverified. File will be added without short "
-            "description.\n");
+        warn_add("--desc ignored; _Short file format is unverified");
         desc = NULL;
     }
 
@@ -1165,6 +1162,7 @@ int cmd_file_add(struct MainPort *myp, int argc, char **argv)
     json_kv_str(&js, "title", title);
     json_kv_int(&js, "size", file_size);
     json_kv_int(&js, "by_account", (long)author_acct);
+    warn_emit(&js);
     json_obj_close(&js);
     json_finish(&js);
 
@@ -1262,9 +1260,7 @@ int cmd_file_edit(struct MainPort *myp, int argc, char **argv)
      * Warn about --desc: _Short file format is unverified.
      */
     if (set_desc) {
-        fprintf(stderr,
-            "Warning: --desc ignored; _Short file format is "
-            "unverified.\n");
+        warn_add("--desc ignored; _Short file format is unverified");
         set_desc = NULL;
         desc_skipped = 1;
     }
@@ -1369,6 +1365,7 @@ int cmd_file_edit(struct MainPort *myp, int argc, char **argv)
     json_kv_bool(&js, "private", (int)item.Private);
     json_kv_bool(&js, "missing_file", (int)item.MissingFile);
     json_kv_int(&js, "purge_status", (long)item.PurgeStatus);
+    warn_emit(&js);
     json_obj_close(&js);
     json_finish(&js);
 
@@ -1478,9 +1475,12 @@ int cmd_file_remove(struct MainPort *myp, int argc, char **argv)
         if (DeleteFile((CONST_STRPTR)phys_path))
             file_deleted = 1;
         else
-            fprintf(stderr,
-                "Warning: could not delete physical file: %s\n",
-                phys_path);
+            {
+                char wbuf[128];
+                snprintf(wbuf, sizeof(wbuf),
+                    "Could not delete physical file: %s", phys_path);
+                warn_add(wbuf);
+            }
     }
 
     /* Output confirmation. */
@@ -1494,6 +1494,7 @@ int cmd_file_remove(struct MainPort *myp, int argc, char **argv)
         strip_mci(buf, sizeof(buf), item.Title));
     if (delete_physical)
         json_kv_bool(&js, "file_deleted", file_deleted);
+    warn_emit(&js);
     json_obj_close(&js);
     json_finish(&js);
 
