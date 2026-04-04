@@ -1,0 +1,21 @@
+# Build artifacts
+src/*.o
+cnet-cli
+
+# Editor files
+*.swp
+*.swo
+*~
+
+# Development artifacts (plans, reviews, test results, research)
+plan*.md
+review*.md
+test_results*.md
+phase*_code_review*.md
+research_checklist.md
+operations_checklist.md
+research/
+tools/
+tests/visual/
+tests/test_plan.md
+tests/__pycache__/
