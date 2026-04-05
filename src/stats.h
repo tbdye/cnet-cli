@@ -1,7 +1,7 @@
 /*
  * stats.h -- System statistics command for cnet-cli
  *
- * Phase 10: stats
+ * System statistics
  */
 
 #ifndef CNET_CLI_STATS_H

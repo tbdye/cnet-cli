@@ -1,7 +1,7 @@
 /*
  * port.h -- Port management commands for cnet-cli
  *
- * Phase 11: port load, port unload, port dump
+ * Port control operations: load, unload, dump
  */
 
 #ifndef CNET_CLI_PORT_H

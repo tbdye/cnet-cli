@@ -1,7 +1,7 @@
 /*
  * message.h -- Message commands for cnet-cli
  *
- * Phase 4: msg list, msg read, msg post, msg respond, msg delete
+ * Message operations: list, read, post, respond, delete, edit, search, move
  */
 
 #ifndef CNET_CLI_MESSAGE_H

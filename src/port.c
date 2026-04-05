@@ -1,7 +1,7 @@
 /*
  * port.c -- Port management commands for cnet-cli
  *
- * Phase 11: port load, port unload, port dump
+ * Port control operations: load, unload, dump
  *
  * All three commands are thin wrappers around send_arexx_command().
  * port load and port unload target CONTROLREXX.1; port dump targets

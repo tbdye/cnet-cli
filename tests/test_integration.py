@@ -351,11 +351,11 @@ def cleanup_test_subboards(host):
 
 
 # ---------------------------------------------------------------------------
-# Phase 1: System Status
+# System Status
 # ---------------------------------------------------------------------------
 
 def test_status(host):
-    print("=== Phase 1: System Status ===", flush=True)
+    print("=== System Status ===", flush=True)
 
     data, raw, rc = run_cli("status", host=host)
 
@@ -472,12 +472,12 @@ def test_who(host):
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Subboard Reads
+# Subboard Reads
 # ---------------------------------------------------------------------------
 
 def test_sub_list(host):
     print(flush=True)
-    print("=== Phase 2: Subboard Reads ===", flush=True)
+    print("=== Subboard Reads ===", flush=True)
 
     data, raw, rc = run_cli("sub list", host=host)
 
@@ -496,7 +496,7 @@ def test_sub_list(host):
     sub_keys = [
         "physnum", "title", "go_key", "marker", "marker_name",
         "killed", "root", "parent", "child", "next", "data_path",
-        "users", "items", "access", "serial",
+        "users", "next_id", "item_count", "access", "serial",
     ]
     for i, sub in enumerate(subs[:3]):  # Spot-check first 3.
         assert_keys(sub, sub_keys, f"sub list[{i}]: has all required keys")
@@ -582,14 +582,15 @@ def test_sub_show_by_number(host):
     summary_keys = [
         "physnum", "title", "go_key", "marker", "marker_name",
         "killed", "root", "parent", "child", "next", "data_path",
-        "users", "items", "access", "serial",
+        "users", "next_id", "item_count", "access", "serial",
     ]
     # Detail keys from emit_sub_detail.
     detail_keys = [
-        "item_count", "subdirectory", "closed", "max_items",
+        "subdirectory", "closed", "max_items",
         "post_access", "respond_access", "upload_access",
         "download_access", "real_names", "anonymous",
         "private_area", "no_mci", "subvalid",
+        "subop_ids", "subop_accs", "last_upload", "last_message",
     ]
     all_keys = summary_keys + detail_keys
     assert_keys(data, all_keys, "sub show <number>: has all summary+detail keys")
@@ -635,10 +636,11 @@ def test_sub_show_by_gokey(host):
               f"sub show <gokey={gokey}>: resolves to physnum {expected_physnum}")
 
     detail_keys = [
-        "subdirectory", "closed", "max_items", "item_count",
+        "subdirectory", "closed", "max_items",
         "post_access", "respond_access", "upload_access",
         "download_access", "real_names", "anonymous",
         "private_area", "no_mci", "subvalid",
+        "subop_ids", "subop_accs", "last_upload", "last_message",
     ]
     assert_keys(data, detail_keys,
                 f"sub show <gokey={gokey}>: has detail keys")
@@ -698,13 +700,13 @@ def test_sub_tree(host):
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: Subboard Mutations
+# Subboard Mutations
 # ---------------------------------------------------------------------------
 
 def test_sub_create_edit_delete(host):
     """Create a test subboard, edit it, delete it."""
     print(flush=True)
-    print("=== Phase 3: Subboard Mutations ===", flush=True)
+    print("=== Subboard Mutations ===", flush=True)
 
     # --- Create ---
     create_args = (
@@ -987,7 +989,7 @@ def _cleanup_physnums(physnums, host):
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: Message Operations
+# Message Operations
 # ---------------------------------------------------------------------------
 
 def test_msg_operations(host):
@@ -999,7 +1001,7 @@ def test_msg_operations(host):
     test subboard is removed even when assertions fail.
     """
     print(flush=True)
-    print("=== Phase 4: Message Operations ===", flush=True)
+    print("=== Message Operations ===", flush=True)
 
     test_physnum = None
 
@@ -1020,7 +1022,7 @@ def test_msg_operations(host):
 
     if data is None or rc != 0:
         print("  FATAL: cannot create test message board, "
-              "skipping Phase 4", flush=True)
+              "skipping message tests", flush=True)
         return
 
     test_physnum = data.get("physnum")
@@ -1036,7 +1038,7 @@ def test_msg_operations(host):
     finally:
         # --- Cleanup: delete test message board ---
         print(flush=True)
-        print("--- Phase 4 cleanup ---", flush=True)
+        print("--- Message cleanup ---", flush=True)
         del_data, _, drc = run_cli(f'sub delete {test_physnum}',
                                    host=host)
         if drc == 0:
@@ -1298,6 +1300,60 @@ def _run_msg_tests(host, test_physnum):
                         "msg delete: item 1 killed still false",
                         f"got {items[0].get('killed')!r}")
 
+    # --- msg move (regression: verify normal move still works) ---
+    print(flush=True)
+    print("--- msg move ---", flush=True)
+
+    # Need a second test board for the move destination.
+    dst_go = "_test_msgdst"
+    dst_data, _, drc = run_cli(
+        f'sub create --title "Test Move Dst" '
+        f'--go {dst_go} --type msg --parent {EXPECTED_ROOT_SUB}',
+        host=host)
+
+    if drc != 0 or not dst_data:
+        runner.skip("msg move: cannot create destination board")
+    else:
+        dst_physnum = dst_data.get("physnum")
+        try:
+            # Post a message to source board.
+            post_data, _, prc = run_cli(
+                f'msg post {go} --title "Move Test" '
+                f'--author 1 --text "Body for move test"',
+                host=host)
+            assert_true(prc == 0, "msg move: post to source",
+                        f"rc={prc}")
+
+            if prc == 0 and post_data:
+                item_num = post_data.get("item_index", 1)
+
+                # Add a response.
+                resp_data, _, rrc = run_cli(
+                    f'msg respond {go} {item_num} '
+                    f'--author 1 --text "Response for move"',
+                    host=host)
+                assert_true(rrc == 0, "msg move: add response",
+                            f"rc={rrc}")
+
+                # Move to destination.
+                move_data, move_raw, mrc = run_cli(
+                    f'msg move {go} {item_num} {dst_go}',
+                    host=host)
+                assert_true(mrc == 0, "msg move: exit code 0",
+                            f"rc={mrc}, raw={move_raw[:200]!r}")
+                if move_data:
+                    assert_eq(move_data.get("status"), "moved",
+                              "msg move: status is moved")
+                    assert_true(
+                        move_data.get("destination", {})
+                        .get("responses_copied", 0) >= 1,
+                        "msg move: response copied",
+                        f"got {move_data}")
+        finally:
+            # Cleanup destination board.
+            run_cli(f'sub delete {dst_physnum} --force',
+                    host=host)
+
     # --- Error cases ---
     print(flush=True)
     print("--- msg error cases ---", flush=True)
@@ -1313,6 +1369,368 @@ def _run_msg_tests(host, test_physnum):
         f'--title "x" --author 1 --text "x"',
         expect_error=True, host=host)
     assert_true(rc != 0, "msg post to non-MsgBase: exit code != 0",
+                f"got {rc}")
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 tests: cnet4.library, OLM timestamp, msg move legacy
+# ---------------------------------------------------------------------------
+
+def test_cnet4_library(host):
+    """Verify cnet4.library is opened (no warning in status output)."""
+    data, raw, rc = run_cli("status", host=host)
+    assert_true(rc == 0, "cnet4: status exit code 0")
+    # If cnet4.library failed to open, there would be a warning.
+    # The status command itself doesn't use cnet4, but init_cnet()
+    # emits a warning that propagates to warn_emit() in the response.
+    if data and "warnings" in data:
+        warnings = data["warnings"]
+        has_cnet4_warn = any("cnet4" in w for w in warnings)
+        assert_true(not has_cnet4_warn,
+                    "cnet4: no cnet4.library warning in status",
+                    f"warnings: {warnings}")
+    else:
+        runner.record("cnet4: no warnings (library opened OK)", True)
+
+
+def test_olm_timestamp(host):
+    """
+    Send OLM via the direct I/O fallback path and verify delivery.
+
+    This test requires a user online on a port. If no user is online,
+    skip. Uses --from 2 (non-sysop) to force the direct I/O fallback
+    where BUG-1 lives.
+    """
+    # Check if any port has a user online.
+    data, _, rc = run_cli("who", host=host)
+    if rc != 0 or not data or not data.get("users"):
+        runner.skip("olm timestamp: no users online for OLM test")
+        return
+
+    # Use the first online user's port.
+    user = data["users"][0]
+    port = user["port"]
+
+    # Send OLM from account 2 (non-sysop) to force the direct I/O
+    # fallback path. FileOLM only succeeds for account 1 (sysop)
+    # from standalone CLI, so --from 2 exercises the code path where
+    # BUG-1 (timestamp offset) lives.
+    olm_args = (
+        f'olm {port} '
+        f'--from 2 '
+        f'--text "Phase1 timestamp test"'
+    )
+    data, raw, rc = run_cli(olm_args, host=host)
+    assert_true(rc == 0, "olm timestamp: send exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if data:
+        assert_true(data.get("status") == "sent",
+                    "olm timestamp: delivery status",
+                    f"got {data.get('status')}")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 tests
+# ---------------------------------------------------------------------------
+
+def test_sub_show_subop_fields(host):
+    """M-6: SubOpIDs and SubOpAccs arrays in sub show."""
+    data, raw, rc = run_cli("sub show 0", host=host)
+    assert_true(rc == 0, "sub show subop: exit code 0")
+    assert_true(data is not None, "sub show subop: valid JSON")
+    if data is None:
+        return
+    # SubOpIDs and SubOpAccs should be 6-element arrays
+    assert_true("subop_ids" in data, "sub show subop: has subop_ids")
+    assert_true("subop_accs" in data, "sub show subop: has subop_accs")
+    ids = data.get("subop_ids", [])
+    accs = data.get("subop_accs", [])
+    assert_eq(len(ids), 6, "sub show subop: subop_ids has 6 elements")
+    assert_eq(len(accs), 6, "sub show subop: subop_accs has 6 elements")
+
+
+def test_sub_show_activity_dates(host):
+    """M-7: LastUpload and LastMessage dates in sub show."""
+    data, raw, rc = run_cli("sub show 0", host=host)
+    assert_true(rc == 0, "sub show dates: exit code 0")
+    assert_true(data is not None, "sub show dates: valid JSON")
+    if data is None:
+        return
+    # LastUpload and LastMessage should be present (string or null)
+    assert_true("last_upload" in data, "sub show dates: has last_upload")
+    assert_true("last_message" in data, "sub show dates: has last_message")
+
+
+def test_user_plan(host):
+    """M-14: User plan file read."""
+    # Test with account 1 (sysop -- always exists)
+    data, raw, rc = run_cli("user plan 1", host=host)
+    assert_true(rc == 0, "user plan: exit code 0", f"got {rc}")
+    assert_true(data is not None, "user plan: valid JSON")
+    if data is None:
+        return
+    assert_eq(data.get("account"), 1, "user plan: account == 1")
+    assert_true("plan" in data, "user plan: has plan key")
+    assert_true("uucp" in data, "user plan: has uucp key")
+
+
+def test_user_plan_nonexistent(host):
+    """M-14: User plan for nonexistent user."""
+    _, _, rc = run_cli("user plan _no_such_user_", expect_error=True,
+                       host=host)
+    assert_true(rc != 0, "user plan nonexistent: nonzero exit code")
+
+
+def test_stats_sam_labels(host):
+    """L-5: SAM/SAG human-readable labels."""
+    data, raw, rc = run_cli("stats", host=host)
+    assert_true(rc == 0, "stats sam labels: exit code 0")
+    assert_true(data is not None, "stats sam labels: valid JSON")
+    if data is None:
+        return
+    sam = data.get("sam", {})
+    assert_true("row_labels" in sam, "stats sam: has row_labels")
+    assert_true("column_labels" in sam, "stats sam: has column_labels")
+    assert_true("data" in sam, "stats sam: has data")
+    assert_eq(len(sam.get("row_labels", [])), 5,
+              "stats sam: 5 row labels")
+    assert_eq(len(sam.get("column_labels", [])), 15,
+              "stats sam: 15 column labels")
+
+    sag = data.get("sag", {})
+    assert_true("row_labels" in sag, "stats sag: has row_labels")
+    assert_true("data" in sag, "stats sag: has data")
+    assert_eq(len(sag.get("row_labels", [])), 2,
+              "stats sag: 2 row labels")
+
+
+def test_user_find_phone(host):
+    """L-6: FindPhone search via --phone flag."""
+    # FindPhone with an unlikely number -- just verify the command works
+    data, raw, rc = run_cli("user find --phone 0000000", host=host)
+    assert_true(rc == 0, "user find --phone: exit code 0", f"got {rc}")
+    assert_true(data is not None, "user find --phone: valid JSON")
+    if data is None:
+        return
+    assert_true("users" in data, "user find --phone: has users array")
+    assert_true("matched" in data, "user find --phone: has matched count")
+
+
+def test_conf_list(host):
+    """L-2: Conference room listing."""
+    data, raw, rc = run_cli("conf list", host=host)
+    assert_true(rc == 0, "conf list: exit code 0", f"got {rc}")
+    assert_true(data is not None, "conf list: valid JSON")
+    if data is None:
+        return
+    assert_true("rooms" in data, "conf list: has rooms array")
+    rooms = data.get("rooms", [])
+    assert_true(isinstance(rooms, list), "conf list: rooms is array")
+
+
+def test_conf_list_all(host):
+    """L-2: Conference room listing with --all flag."""
+    data, raw, rc = run_cli("conf list --all", host=host)
+    assert_true(rc == 0, "conf list --all: exit code 0", f"got {rc}")
+    assert_true(data is not None, "conf list --all: valid JSON")
+    if data is None:
+        return
+    assert_true("rooms" in data, "conf list --all: has rooms array")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Group edit and transpose tests
+# ---------------------------------------------------------------------------
+
+# Test group number -- use group 31 (typically unused).
+TEST_GROUP = 31
+
+
+def test_group_edit_transpose(host):
+    """
+    Test group edit (H-1) and group transpose (H-2).
+
+    Uses group 31 as a test group. Captures original values, modifies
+    them, validates, then restores originals via try/finally.
+    """
+    print(flush=True)
+    print("=== Phase 3: Group Edit / Transpose ===", flush=True)
+
+    # --- Baseline: capture original group state ---
+    orig_data, raw, rc = run_cli(f'group show {TEST_GROUP}', host=host)
+    assert_true(rc == 0, "group show baseline: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    assert_true(orig_data is not None, "group show baseline: valid JSON",
+                f"raw: {raw[:200]!r}" if orig_data is None else "")
+
+    if orig_data is None:
+        return
+
+    orig_name = orig_data.get("name", "")
+    orig_privs = orig_data.get("privileges", {})
+    orig_expire_days = orig_data.get("expire_days", 0)
+    orig_expire_access = orig_data.get("expire_access", 0)
+    orig_daily_minutes = orig_privs.get("daily_minutes", 0)
+    orig_idle = orig_privs.get("idle_limit", 0)
+    orig_abits = orig_privs.get("abits", "0x00000000")
+
+    try:
+        _test_group_edit_cases(host, orig_data)
+        _test_group_transpose_cases(host)
+    finally:
+        # Restore original group state regardless of test outcome.
+        _restore_group(host, orig_name, orig_expire_days,
+                       orig_expire_access, orig_daily_minutes,
+                       orig_idle, orig_abits, orig_privs)
+
+
+def _restore_group(host, orig_name, orig_expire_days,
+                   orig_expire_access, orig_daily_minutes,
+                   orig_idle, orig_abits, orig_privs):
+    """Restore test group to original state."""
+    print("--- Restoring test group ---", flush=True)
+
+    # Build restore command with all the fields we changed.
+    # Name may be empty -- pass explicit empty string.
+    name_arg = f'--name "{orig_name}"' if orig_name else '--name ""'
+
+    restore_args = (
+        f'group edit {TEST_GROUP} '
+        f'{name_arg} '
+        f'--expire-days {orig_expire_days} '
+        f'--expire-access {orig_expire_access} '
+        f'--daily-minutes {orig_daily_minutes} '
+        f'--idle {orig_idle} '
+        f'--abits {orig_abits}'
+    )
+    _, _, rc = run_cli(restore_args, host=host)
+    if rc == 0:
+        print("  Group restored.", flush=True)
+    else:
+        print(f"  WARNING: group restore failed (rc={rc})", flush=True)
+
+
+def _test_group_edit_cases(host, orig_data):
+    """H-1 test cases: group edit."""
+
+    # --- Edit name ---
+    data, raw, rc = run_cli(
+        f'group edit {TEST_GROUP} --name "CLI Test Group"', host=host)
+    assert_true(rc == 0, "group edit name: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if data is not None:
+        assert_eq(data.get("status"), "updated",
+                  "group edit name: status == updated")
+        assert_eq(data.get("name"), "CLI Test Group",
+                  "group edit name: name changed")
+        changed = data.get("fields_changed", [])
+        assert_true("name" in changed,
+                    "group edit name: fields_changed includes name",
+                    f"got {changed!r}")
+
+    # Verify via group show.
+    show_data, _, show_rc = run_cli(
+        f'group show {TEST_GROUP}', host=host)
+    if show_rc == 0 and show_data is not None:
+        assert_eq(show_data.get("name"), "CLI Test Group",
+                  "group edit name: show confirms name change")
+
+    # --- Edit numeric fields ---
+    data, raw, rc = run_cli(
+        f'group edit {TEST_GROUP} --daily-minutes 120 --idle 30',
+        host=host)
+    assert_true(rc == 0, "group edit numeric: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if data is not None:
+        assert_eq(data.get("status"), "updated",
+                  "group edit numeric: status == updated")
+        privs = data.get("privileges", {})
+        assert_eq(privs.get("daily_minutes"), 120,
+                  "group edit numeric: daily_minutes == 120")
+        assert_eq(privs.get("idle_limit"), 30,
+                  "group edit numeric: idle == 30")
+        changed = data.get("fields_changed", [])
+        assert_true("daily_minutes" in changed and "idle_limit" in changed,
+                    "group edit numeric: fields_changed correct",
+                    f"got {changed!r}")
+
+    # --- Edit hex bitmask ---
+    data, raw, rc = run_cli(
+        f'group edit {TEST_GROUP} --abits 0x0000001F', host=host)
+    assert_true(rc == 0, "group edit hex: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if data is not None:
+        privs = data.get("privileges", {})
+        assert_eq(privs.get("abits"), "0x0000001f",
+                  "group edit hex: abits == 0x0000001f")
+
+    # --- Edit expire fields ---
+    data, raw, rc = run_cli(
+        f'group edit {TEST_GROUP} --expire-days 90 --expire-access 0',
+        host=host)
+    assert_true(rc == 0, "group edit expire: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if data is not None:
+        assert_eq(data.get("expire_days"), 90,
+                  "group edit expire: expire_days == 90")
+        assert_eq(data.get("expire_access"), 0,
+                  "group edit expire: expire_access == 0")
+
+    # --- Error: no flags ---
+    _, _, rc = run_cli(
+        f'group edit {TEST_GROUP}', expect_error=True, host=host)
+    assert_true(rc != 0, "group edit no-flags: error exit code",
+                f"got {rc}")
+
+    # --- Error: invalid group number ---
+    _, _, rc = run_cli(
+        'group edit 99 --name "X"', expect_error=True, host=host)
+    assert_true(rc != 0, "group edit invalid group: error exit code",
+                f"got {rc}")
+
+    # --- Error: invalid hex value ---
+    _, _, rc = run_cli(
+        f'group edit {TEST_GROUP} --abits not_hex',
+        expect_error=True, host=host)
+    assert_true(rc != 0, "group edit invalid hex: error exit code",
+                f"got {rc}")
+
+    # --- Error: unknown flag ---
+    _, _, rc = run_cli(
+        f'group edit {TEST_GROUP} --nonexistent 42',
+        expect_error=True, host=host)
+    assert_true(rc != 0, "group edit unknown flag: error exit code",
+                f"got {rc}")
+
+
+def _test_group_transpose_cases(host):
+    """H-2 test cases: group transpose."""
+
+    # --- Transpose on an empty/unused group ---
+    # First find an unused group (high number, no members).
+    # Group 31 may have 0 members after our edit test.
+    data, raw, rc = run_cli(
+        f'group transpose {TEST_GROUP}', host=host)
+    assert_true(rc == 0, "group transpose: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if data is not None:
+        assert_eq(data.get("status"), "transposed",
+                  "group transpose: status == transposed")
+        assert_eq(data.get("group"), TEST_GROUP,
+                  "group transpose: group matches")
+        assert_true("accounts_modified" in data,
+                    "group transpose: has accounts_modified field")
+        assert_true("accounts_skipped" in data,
+                    "group transpose: has accounts_skipped field")
+        assert_true("total_scanned" in data,
+                    "group transpose: has total_scanned field")
+        assert_true(data.get("total_scanned", 0) > 0,
+                    "group transpose: total_scanned > 0")
+
+    # --- Error: invalid group number ---
+    _, _, rc = run_cli(
+        'group transpose 99', expect_error=True, host=host)
+    assert_true(rc != 0, "group transpose invalid group: error exit code",
                 f"got {rc}")
 
 
@@ -1359,12 +1777,15 @@ def main():
     # Cleanup orphaned test subboards from previous runs.
     cleanup_test_subboards(host)
 
-    # Phase 1: System status.
+    # System status.
     test_status(host)
     test_ports(host)
     test_who(host)
 
-    # Phase 2: Subboard reads.
+    # Phase 1: cnet4.library availability.
+    test_cnet4_library(host)
+
+    # Subboard reads.
     test_sub_list(host)
     test_sub_list_active(host)
     test_sub_list_type_msg(host)
@@ -1375,20 +1796,44 @@ def main():
     test_sub_show_nonexistent(host)
     test_sub_tree(host)
 
-    # Phase 3: Subboard mutations.
+    # Subboard mutations.
     if skip_mutations:
-        runner.skip("Phase 3: mutations", "skipped via --skip-mutations")
+        runner.skip("Subboard mutations", "skipped via --skip-mutations")
     else:
         test_sub_create_edit_delete(host)
         test_sub_force_delete_reparent(host)
         test_sub_delete_root(host)
 
-    # Phase 4: Message operations.
+    # Message operations (includes msg move regression test).
     if skip_mutations:
-        runner.skip("Phase 4: message operations",
+        runner.skip("Message operations",
                     "skipped via --skip-mutations")
     else:
         test_msg_operations(host)
+
+    # Phase 1: OLM timestamp test (requires user online, may skip).
+    if skip_mutations:
+        runner.skip("OLM timestamp test",
+                    "skipped via --skip-mutations")
+    else:
+        test_olm_timestamp(host)
+
+    # Phase 2: Trivial read additions.
+    test_sub_show_subop_fields(host)
+    test_sub_show_activity_dates(host)
+    test_user_plan(host)
+    test_user_plan_nonexistent(host)
+    test_stats_sam_labels(host)
+    test_user_find_phone(host)
+    test_conf_list(host)
+    test_conf_list_all(host)
+
+    # Phase 3: Group edit and transpose.
+    if skip_mutations:
+        runner.skip("Group edit/transpose",
+                    "skipped via --skip-mutations")
+    else:
+        test_group_edit_transpose(host)
 
     # Final summary.
     rc = runner.summary()

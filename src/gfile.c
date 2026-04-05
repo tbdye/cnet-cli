@@ -1,7 +1,7 @@
 /*
  * gfile.c -- GFile (General Text File) commands for cnet-cli
  *
- * Phase 14: gfile list, read, add, remove
+ * GFile operations: list, read, add, remove
  *
  * GFile areas use the same MRK_TEXT_DOOR (3) marker and identical
  * data format as news. Each wrapper validates arguments with

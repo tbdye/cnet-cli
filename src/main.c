@@ -1,7 +1,7 @@
 /*
  * cnet-cli -- CNet BBS standalone admin CLI
  *
- * Phase 1: System status, port listing, online users.
+ * System status, port listing, online users.
  *
  * Build:
  *   make CNET_SDK_PATH=../cnet-sdk
@@ -34,6 +34,7 @@
 #undef __asm
 
 #include <proto/exec.h>
+#include <proto/cnet4.h>
 
 /*
  * Compile-time verification that struct sizes match the live SAS/C ABI.
@@ -55,6 +56,12 @@ _Static_assert(sizeof(struct HeaderType) == 288,
     "HeaderType must be 288 bytes (SAS/C alignment)");
 _Static_assert(sizeof(struct AccessGroup) == 156,
     "AccessGroup must be 156 bytes");
+_Static_assert(sizeof(struct Privs) == 92,
+    "Privs must be 92 bytes");
+_Static_assert(sizeof(struct RoomConfig) == 628,
+    "RoomConfig size mismatch -- check packing");
+_Static_assert(sizeof(struct Room) == 16662,
+    "Room size mismatch -- check packing");
 
 #include <rexx/rxslib.h>
 
@@ -73,6 +80,7 @@ _Static_assert(sizeof(struct AccessGroup) == 156,
 #include "log.h"
 #include "arexx.h"
 #include "port.h"
+#include "conf.h"
 
 /* Stack size for libnix -- 64KB is generous for our needs. */
 unsigned long __stack = 65536;
@@ -99,6 +107,14 @@ struct Library *CNetMailBase = NULL;
  * actual storage. May be NULL if rexxsyslib.library is not available.
  */
 struct RxsLib *RexxSysBase = NULL;
+
+/*
+ * CNet4Base: required by the inline stubs in <inline/cnet4.h>.
+ * proto/cnet4.h declares "extern struct Library *CNet4Base".
+ * We provide the actual storage. May be NULL if cnet4.library
+ * is not available.
+ */
+struct Library *CNet4Base = NULL;
 
 /* Global MainPort pointer, valid after init_cnet(). */
 static struct MainPort *myp = NULL;
@@ -138,6 +154,7 @@ static int cmd_status(void)
     json_kv_int(&js, "root_sub", (long)myp->root);
     json_kv_int(&js, "open_pfiles", myp->OpenPfiles);
 
+    warn_emit(&js);
     json_obj_close(&js);
     json_finish(&js);
     return 0;
@@ -209,7 +226,7 @@ static int cmd_who(void)
     int i;
 
     /*
-     * Phase 6: route "who --detail" and "who <port>" to
+     * Route "who --detail" and "who <port>" to
      * cmd_who_detail for extended output.
      */
     if (g_argc >= 3) {
@@ -396,6 +413,7 @@ static const struct user_command user_commands[] = {
     { "list",    cmd_user_list    },
     { "show",    cmd_user_show    },
     { "find",    cmd_user_find    },
+    { "plan",    cmd_user_plan    },
     { "edit",    cmd_user_edit    },
     { "disable", cmd_user_disable },
     { "enable",  cmd_user_enable  },
@@ -417,7 +435,8 @@ static int cmd_user(void)
             "Subcommands:\n"
             "  list [--group N] [--limit N] [--offset N]\n"
             "  show <account|handle>\n"
-            "  find <query>\n"
+            "  find <query> [--phone]  Search users by handle/name or phone\n"
+            "  plan <account|handle>\n"
             "  edit <account|handle> [--handle H] [--realname N] ...\n"
             "  disable <account|handle>\n"
             "  enable <account|handle>\n"
@@ -679,9 +698,11 @@ struct group_command {
 };
 
 static const struct group_command group_commands[] = {
-    { "list", cmd_group_list },
-    { "show", cmd_group_show },
-    { NULL,   NULL           }
+    { "list",      cmd_group_list      },
+    { "show",      cmd_group_show      },
+    { "edit",      cmd_group_edit      },
+    { "transpose", cmd_group_transpose },
+    { NULL,        NULL                }
 };
 
 static int cmd_group(void)
@@ -695,8 +716,10 @@ static int cmd_group(void)
             "Usage: cnet-cli group <subcommand> [args]\n"
             "\n"
             "Subcommands:\n"
-            "  list              List all access groups\n"
-            "  show <id>         Show group detail");
+            "  list                   List all access groups\n"
+            "  show <id>              Show group detail\n"
+            "  edit <id> [--flags]    Edit group fields\n"
+            "  transpose <id>         Push DefPrivs to all members");
         return 1;
     }
 
@@ -895,6 +918,49 @@ static int cmd_olm(void)
     return cmd_olm_send(myp, olm_argc, olm_argv);
 }
 
+/* ---------- command: conf (conference room dispatch) ---------- */
+
+struct conf_command {
+    const char *name;
+    int (*handler)(struct MainPort *, int, char **);
+};
+
+static const struct conf_command conf_commands[] = {
+    { "list", cmd_conf_list },
+    { NULL,   NULL          }
+};
+
+static int cmd_conf(void)
+{
+    const struct conf_command *cc;
+    int conf_argc;
+    char **conf_argv;
+
+    if (g_argc < 3) {
+        json_error(
+            "Usage: cnet-cli conf <subcommand> [args]\n"
+            "\n"
+            "Subcommands:\n"
+            "  list [--all]          List conference rooms");
+        return 1;
+    }
+
+    conf_argc = g_argc - 2;
+    conf_argv = g_argv + 2;
+
+    for (cc = conf_commands; cc->name; cc++) {
+        if (strcmp(conf_argv[0], cc->name) == 0)
+            return cc->handler(myp, conf_argc, conf_argv);
+    }
+
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "Unknown conf command: %s", conf_argv[0]);
+        json_error(buf);
+    }
+    return 1;
+}
+
 /* ---------- command dispatch ---------- */
 
 struct command {
@@ -920,6 +986,7 @@ static const struct command commands[] = {
     { "stats",  cmd_stats  },
     { "arexx",  cmd_arexx  },
     { "port",   cmd_port   },
+    { "conf",   cmd_conf   },
     { NULL,     NULL       }
 };
 
@@ -984,7 +1051,10 @@ static void print_usage(void)
         "  user list [--group N] List all user accounts\n"
         "  user show <acct|handle>\n"
         "                        User detail\n"
-        "  user find <query>     Search users by handle/name\n"
+        "  user find <query> [--phone]\n"
+        "                        Search users by handle/name or phone\n"
+        "  user plan <acct|handle>\n"
+        "                        User plan file\n"
         "  user edit <acct> ...  Edit user fields\n"
         "  user disable <acct>   Suspend account\n"
         "  user enable <acct>    Re-enable account\n"
@@ -1026,7 +1096,8 @@ static void print_usage(void)
         "                        Send ARexx command to CONTROLREXX.1\n"
         "  port load <port>      Load a BBS port\n"
         "  port unload <port>    Unload a BBS port\n"
-        "  port dump <port>      Disconnect user on a port");
+        "  port dump <port>      Disconnect user on a port\n"
+        "  conf list [--all]     List conference rooms");
 }
 
 /* ---------- init / cleanup ---------- */
@@ -1075,11 +1146,28 @@ static int init_cnet(void)
             " (arexx/port commands unavailable)");
     }
 
+    /*
+     * Open cnet4.library for timestamp functions (CNetTime,
+     * CNetExplodeTime, CNetImplodeTime) and range parsing
+     * (CNetFindRange, CNetNextRange). Non-fatal if missing --
+     * OLM timestamp code falls back to DateStamp() if unavailable.
+     */
+    CNet4Base = (struct Library *)OpenLibrary(
+        (CONST_STRPTR)"cnet4.library", 0);
+    if (!CNet4Base) {
+        warn_add("Cannot open cnet4.library"
+            " (timestamp/range functions unavailable)");
+    }
+
     return 0;
 }
 
 static void cleanup_cnet(void)
 {
+    if (CNet4Base) {
+        CloseLibrary(CNet4Base);
+        CNet4Base = NULL;
+    }
     if (RexxSysBase) {
         CloseLibrary((struct Library *)RexxSysBase);
         RexxSysBase = NULL;

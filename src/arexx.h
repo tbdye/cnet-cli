@@ -1,7 +1,7 @@
 /*
  * arexx.h -- ARexx IPC commands for cnet-cli
  *
- * Phase 11: arexx send, arexx control
+ * ARexx IPC operations: send, control
  */
 
 #ifndef CNET_CLI_AREXX_H

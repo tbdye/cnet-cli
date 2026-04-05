@@ -1,7 +1,7 @@
 /*
  * gfile.h -- GFile (General Text File) commands for cnet-cli
  *
- * Phase 14: gfile list, read, add, remove
+ * GFile operations: list, read, add, remove
  */
 
 #ifndef CNET_CLI_GFILE_H

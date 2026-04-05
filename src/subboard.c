@@ -1,8 +1,7 @@
 /*
  * subboard.c -- Subboard commands for cnet-cli
  *
- * Phase 2: sub list, sub show, sub tree
- * Phase 3: sub create, sub edit, sub delete
+ * Subboard operations: list, show, tree, path, create, edit, delete
  *
  * Read commands acquire SEM[5] shared for safe concurrent access.
  * Mutation commands acquire SEM[5] exclusive and perform dual writes
@@ -68,7 +67,8 @@ static void emit_sub_summary(struct json_state *js,
     json_kv_str(js, "data_path",
         strip_mci(buf, sizeof(buf), sub->DataPath));
     json_kv_int(js, "users", (long)sub->Users);
-    json_kv_uint(js, "items", (unsigned long)sub->count);
+    json_kv_uint(js, "next_id", (unsigned long)sub->count);
+    json_kv_uint(js, "item_count", (unsigned long)sub->rn);
     json_kv_str(js, "access",
         format_access(abuf, sizeof(abuf), (unsigned long)sub->Access));
     json_kv_uint(js, "serial", (unsigned long)sub->SerNum);
@@ -82,7 +82,6 @@ static void emit_sub_detail(struct json_state *js,
 {
     char abuf[16];
 
-    json_kv_uint(js, "item_count", (unsigned long)sub->count);
     json_kv_bool(js, "subdirectory", (int)sub->Subdirectory);
     json_kv_bool(js, "closed", (int)sub->Closed);
     json_kv_int(js, "max_items", (long)sub->MaxItems);
@@ -104,6 +103,38 @@ static void emit_sub_detail(struct json_state *js,
     json_kv_str(js, "arcs",
         format_access(abuf, sizeof(abuf), (unsigned long)sub->Arcs));
     json_kv_int(js, "subvalid", sub->subvalid);
+
+    /* Sub-operator IDs and account numbers (M-6) */
+    {
+        int i;
+        json_key(js, "subop_ids");
+        json_arr_open(js);
+        for (i = 0; i < 6; i++)
+            json_int(js, sub->SubOpIDs[i]);
+        json_arr_close(js);
+
+        json_key(js, "subop_accs");
+        json_arr_open(js);
+        for (i = 0; i < 6; i++)
+            json_int(js, (long)sub->SubOpAccs[i]);
+        json_arr_close(js);
+    }
+
+    /* Activity dates (M-7) */
+    {
+        char datebuf[20];
+        if (is_null_date(&sub->LastUpload))
+            json_kv_null(js, "last_upload");
+        else
+            json_kv_str(js, "last_upload",
+                format_date(datebuf, sizeof(datebuf), &sub->LastUpload));
+
+        if (is_null_date(&sub->LastMessage))
+            json_kv_null(js, "last_message");
+        else
+            json_kv_str(js, "last_message",
+                format_date(datebuf, sizeof(datebuf), &sub->LastMessage));
+    }
 }
 
 /* ---- sub list ---- */
@@ -466,7 +497,7 @@ int cmd_sub_path(struct MainPort *myp, int argc, char **argv)
     return 0;
 }
 
-/* ==== Phase 3: Subboard mutation commands ==== */
+/* ==== Subboard mutation commands ==== */
 
 /*
  * Disk file path for the subboard array.

@@ -1,7 +1,7 @@
 /*
  * log.c -- Log file commands for cnet-cli
  *
- * Phase 10: log list, log read, log callers
+ * System log operations: list, read, callers
  *
  * log list   -- enumerate files in sysdata:log/
  * log read   -- read a named log file with optional --tail/--lines

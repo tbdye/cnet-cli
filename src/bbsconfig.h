@@ -1,7 +1,7 @@
 /*
  * bbsconfig.h -- BBS configuration commands for cnet-cli
  *
- * Phase 10: config show
+ * BBS configuration display
  *
  * Named bbsconfig.h (not config.h) to avoid collision with
  * cnet-sdk's cnet/config.h which is included transitively.

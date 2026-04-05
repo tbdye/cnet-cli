@@ -1,7 +1,7 @@
 /*
  * bbsconfig.c -- BBS configuration commands for cnet-cli
  *
- * Phase 10: config show
+ * BBS configuration display
  *
  * Reads the global configuration (NewConfig1) and extended
  * configuration (ConfigExtension) and emits them as JSON.

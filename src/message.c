@@ -1,7 +1,7 @@
 /*
  * message.c -- Message commands for cnet-cli
  *
- * Phase 4: msg list, msg read, msg post, msg respond, msg delete
+ * Message operations: list, read, post, respond, delete, edit, search, move
  *
  * All commands follow the OneMoreUser / OneLessUser lifecycle:
  * OneMoreUser loads subboard item/header data files (_Items3, _Headers3)
@@ -40,6 +40,10 @@ extern struct Library *CNetBase;
 
 /* Magic value for HeaderType records in _text. */
 #define HEADERTYPE_MAGIC 0xBB25B8C4UL
+
+/* Maximum responses to walk in the linked list chain.
+ * Prevents infinite loops from circular chains or corrupted pointers. */
+#define MAX_RESPONSES_WALK 10000
 
 /*
  * Build a path to a file under a subboard's data/ directory.
@@ -528,6 +532,43 @@ legacy_fallback:
         return -1;
     *out_text = body_text;
     *err_msg = NULL;
+    return 0;
+}
+
+/*
+ * Read only the HeaderType from _text at the given seek position.
+ * Does NOT read the body text. Validates HEADERTYPE_MAGIC.
+ * Returns 0 on success, -1 on failure (I/O error or bad magic).
+ */
+static int read_header_only(const char *text_path, long seek_pos,
+    struct HeaderType *out_hdr)
+{
+    BPTR fh;
+    LONG nread;
+
+    fh = Open((CONST_STRPTR)text_path, MODE_OLDFILE);
+    if (!fh)
+        return -1;
+
+    if (Seek(fh, seek_pos, OFFSET_BEGINNING) < 0) {
+        Close(fh);
+        return -1;
+    }
+
+    nread = Read(fh, out_hdr, (LONG)sizeof(struct HeaderType));
+    Close(fh);
+
+    if (nread != (LONG)sizeof(struct HeaderType))
+        return -1;
+
+    /* Validate magic to catch corrupted Next pointers that lead
+     * to garbage data. Without this check, the counting pass could
+     * follow a long chain of garbage before the reading pass
+     * (which does validate magic via read_header_and_text())
+     * catches the error. */
+    if (out_hdr->Magic != HEADERTYPE_MAGIC)
+        return -1;
+
     return 0;
 }
 
@@ -2652,7 +2693,7 @@ int cmd_msg_move(struct MainPort *myp, int argc, char **argv)
     ReleaseSemaphore(&myp->SEM[5]);
 
     /*
-     * Phase 1: Read source data.
+     * Step 1: Read source data.
      */
     if (!OneMoreUser(src_sub, (UBYTE)0)) {
         json_error("OneMoreUser failed for source subboard");
@@ -2674,16 +2715,6 @@ int cmd_msg_move(struct MainPort *myp, int argc, char **argv)
     /* Guard: killed item check. */
     if (src_ihead.Killed) {
         json_error("Source item is killed");
-        OneLessUser(src_sub);
-        return 1;
-    }
-
-    /* Guard: ihead.Number == 0 check. */
-    if (src_ihead.Number == 0) {
-        json_error("Cannot move item: ihead.Number is 0 "
-            "(pre-fix item without serial number). Response "
-            "matching by ItemNumber would be unreliable. "
-            "Use msg delete and re-post instead.");
         OneLessUser(src_sub);
         return 1;
     }
@@ -2716,7 +2747,8 @@ int cmd_msg_move(struct MainPort *myp, int argc, char **argv)
     }
 
     /* Read all responses. */
-    {
+    if (src_ihead.Number != 0) {
+        /* Strategy A: _Message3 scan (proven path for valid IDs). */
         struct MessageType3 *msgs;
         long msg_count = 0;
         long mi;
@@ -2775,6 +2807,85 @@ int cmd_msg_move(struct MainPort *myp, int argc, char **argv)
             }
         }
         if (msgs) free(msgs);
+    } else {
+        /* Strategy B: linked list walk for legacy items (Number==0).
+         * Follow HeaderType.Next from the original post through
+         * all responses. This avoids the _Message3 ItemNumber
+         * ambiguity when multiple items share Number==0. */
+        char tp[256];
+        long pos;
+        int capacity = 0;
+
+        build_text_path(tp, sizeof(tp), src_sub->DataPath);
+
+        /* Start from original post, skip to first response. */
+        pos = src_hdr.Next;
+
+        /* First pass: count responses by walking the chain.
+         * MAX_RESPONSES_WALK bounds the loop to prevent infinite
+         * iteration from circular chains or corrupted pointers. */
+        {
+            long walk = pos;
+            while (walk >= 0 && capacity < MAX_RESPONSES_WALK) {
+                struct HeaderType wh;
+                memset(&wh, 0, sizeof(wh));
+                if (read_header_only(tp, walk, &wh) != 0)
+                    break;
+                capacity++;
+                walk = wh.Next;
+            }
+        }
+
+        if (capacity > 0) {
+            resps = (struct move_response *)malloc(
+                (unsigned long)capacity *
+                sizeof(struct move_response));
+            if (!resps) {
+                if (src_body) free(src_body);
+                OneLessUser(src_sub);
+                json_error("Out of memory");
+                return 1;
+            }
+            memset(resps, 0,
+                (unsigned long)capacity *
+                sizeof(struct move_response));
+            resp_alloc = capacity;
+
+            /* Second pass: read each response. */
+            resp_count = 0;
+            pos = src_hdr.Next;
+            while (pos >= 0 && resp_count < resp_alloc) {
+                struct HeaderType rh;
+                char *rb = NULL;
+                int rr;
+
+                memset(&rh, 0, sizeof(rh));
+                rr = read_header_and_text(tp, pos,
+                    &rh, &rb, &err_msg);
+                if (rr < 0 || !rb) {
+                    if (rb) free(rb);
+                    pos = -1; /* Cannot continue chain. */
+                    break;
+                }
+
+                resps[resp_count].hdr = rh;
+                resps[resp_count].body = rb;
+
+                /* Synthesize MessageType3 from HeaderType. */
+                memset(&resps[resp_count].msg, 0,
+                    sizeof(struct MessageType3));
+                resps[resp_count].msg.ItemNumber = 0;
+                resps[resp_count].msg.Seek = pos;
+                resps[resp_count].msg.ByID = rh.ByID;
+                resps[resp_count].msg.ToID = rh.ToID;
+                resps[resp_count].msg.Number = rh.Number;
+                resps[resp_count].msg.PostDate = rh.PostDate;
+                resps[resp_count].msg.Imported = rh.Imported;
+
+                resp_count++;
+                pos = rh.Next;
+            }
+        }
     }
 
     /* Check for response count mismatch. */
@@ -2784,7 +2895,7 @@ int cmd_msg_move(struct MainPort *myp, int argc, char **argv)
     OneLessUser(src_sub);
 
     /*
-     * Phase 2: Write to destination.
+     * Step 2: Write to destination.
      */
     if (!OneMoreUser(dst_sub, (UBYTE)0)) {
         json_error("OneMoreUser failed for destination subboard");
@@ -2937,7 +3048,7 @@ move_dst_release:
         goto move_free_temp;
 
     /*
-     * Phase 3: Delete source (skipped on partial failure).
+     * Step 3: Delete source (skipped on partial failure).
      */
     if (!phase2_failed) {
         if (OneMoreUser(src_sub, (UBYTE)0)) {

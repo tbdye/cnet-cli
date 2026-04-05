@@ -1,7 +1,7 @@
 /*
  * mail.c -- Mail commands for cnet-cli
  *
- * Phase 7: mail send, list, read, reply, delete, folders, count
+ * Mail operations: send, list, read, reply, delete, folders, count, feedback, verify
  *
  * All mail operations use direct file I/O against _mhead4 (810-byte
  * records) and _mtext4 (body text). Per-account semaphores from
@@ -1455,7 +1455,7 @@ int cmd_mail_delete(struct MainPort *myp, int argc, char **argv)
     sems = GetMailSems();
     ObtainSemaphore(&sems[account - 1]);
 
-    /* ---- PHASE 1: Read ALL source header records ---- */
+    /* ---- STEP 1: Read ALL source header records ---- */
     all_headers = read_mhead_records(src_mhead, &rec_count);
     if (!all_headers || rec_count == 0) {
         json_error("Cannot open mail header file or file is empty");
@@ -1486,7 +1486,7 @@ int cmd_mail_delete(struct MainPort *myp, int argc, char **argv)
         goto cleanup_body;
     }
 
-    /* ---- PHASE 2: Write to TRASHCAN ---- */
+    /* ---- STEP 2: Write to TRASHCAN ---- */
     if (!is_trashcan) {
         char trash_folder_path[256];
         char trash_mtext[300];
@@ -1615,7 +1615,7 @@ int cmd_mail_delete(struct MainPort *myp, int argc, char **argv)
         }
     }
 
-    /* ---- PHASE 3: Remove from source ---- */
+    /* ---- STEP 3: Remove from source ---- */
     if (rec_count == 1) {
         /* Only record -- write empty file */
         BPTR fh_src = Open((CONST_STRPTR)src_mhead,

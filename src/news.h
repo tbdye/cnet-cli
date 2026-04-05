@@ -1,7 +1,7 @@
 /*
  * news.h -- News/GFile/PFile (text/door) commands for cnet-cli
  *
- * Phase 9: news list, read, post, edit, delete
+ * News operations: list, read, post, edit, delete
  */
 
 #ifndef CNET_CLI_NEWS_H

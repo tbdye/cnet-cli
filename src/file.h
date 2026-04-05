@@ -1,7 +1,7 @@
 /*
  * file.h -- File area commands for cnet-cli
  *
- * Phase 8: file list, show, add, edit, remove, validate
+ * File area operations: list, show, add, edit, remove, validate, find
  */
 
 #ifndef CNET_CLI_FILE_H

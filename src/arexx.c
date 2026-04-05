@@ -1,7 +1,7 @@
 /*
  * arexx.c -- ARexx IPC core and command handlers for cnet-cli
  *
- * Phase 11: arexx send, arexx control
+ * ARexx IPC operations: send, control
  *
  * Provides the reusable ARexx IPC function send_arexx_command() and
  * two command handlers that expose it via the CLI.

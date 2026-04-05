@@ -1,7 +1,7 @@
 /*
  * news.c -- News/GFile/PFile (text/door) commands for cnet-cli
  *
- * Phase 9: news list, read, post, edit, delete
+ * News operations: list, read, post, edit, delete
  *
  * All commands follow the OneMoreUser / OneLessUser lifecycle:
  * OneMoreUser loads subboard item/header data files (_Items3, _Headers3)

@@ -1,7 +1,7 @@
 /*
  * file.c -- File area commands for cnet-cli
  *
- * Phase 8: file list, show, add, edit, remove, validate
+ * File area operations: list, show, add, edit, remove, validate, find
  *
  * All commands follow the OneMoreUser / OneLessUser lifecycle:
  * OneMoreUser loads subboard item/header data files (_Items3, _Headers3)

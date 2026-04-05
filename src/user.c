@@ -1,7 +1,7 @@
 /*
  * user.c -- User management commands for cnet-cli
  *
- * Phase 6: user list, show, find, edit, disable, enable; who detail; OLM
+ * User operations: list, show, find, edit, disable, enable, delete, profile; who detail; OLM
  *
  * User account access uses LockAccount/UnLockAccount from cnet.library.
  * Every successful LockAccount MUST be paired with UnLockAccount in all
@@ -22,12 +22,16 @@
 
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <proto/cnet4.h>
 #include "user.h"
 #include "json.h"
 #include "util.h"
 
 /* From main.c */
 extern struct Library *CNetBase;
+
+/* From main.c -- may be NULL if cnet4.library is not available */
+extern struct Library *CNet4Base;
 
 /* ---- internal helpers ---- */
 
@@ -321,17 +325,25 @@ int cmd_user_show(struct MainPort *myp, int argc, char **argv)
 int cmd_user_find(struct MainPort *myp, int argc, char **argv)
 {
     struct json_state js;
-    const char *query;
+    int phone_mode = 0;
+    const char *query = NULL;
     int i;
     int emitted = 0;
     long num_accounts;
 
-    if (argc < 2) {
-        json_error("Usage: cnet-cli user find <query>");
-        return 1;
+    /* Parse flags and find query argument */
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--phone") == 0) {
+            phone_mode = 1;
+        } else if (!query) {
+            query = argv[i];
+        }
     }
 
-    query = argv[1];
+    if (!query) {
+        json_error("Usage: cnet-cli user find <query> [--phone]");
+        return 1;
+    }
 
     ObtainSemaphoreShared(&myp->SEM[1]);
 
@@ -343,18 +355,36 @@ int cmd_user_find(struct MainPort *myp, int argc, char **argv)
     json_key(&js, "users");
     json_arr_open(&js);
 
-    for (i = 0; i < (int)num_accounts; i++) {
-        struct KeyElement4 *key = &myp->Key[i];
+    if (phone_mode) {
+        /*
+         * FindPhone is a single-shot search, not an iterator.
+         * It writes the sorted index into *n (into IPhone[]),
+         * like FindHandle writes into IName[].  Call it once;
+         * if it matches, map through IPhone[] to get the account.
+         */
+        short n = 0;
+        if (FindPhone(&n, (char *)query, (short)0)) {
+            short account = myp->IPhone[n];
+            if (account >= 1 && account <= (short)num_accounts) {
+                struct KeyElement4 *key = &myp->Key[account - 1];
+                emit_user_summary(&js, key, (int)account, myp);
+                emitted++;
+            }
+        }
+    } else {
+        for (i = 0; i < (int)num_accounts; i++) {
+            struct KeyElement4 *key = &myp->Key[i];
 
-        /* Skip empty entries */
-        if (key->Handle[0] == '\0')
-            continue;
+            /* Skip empty entries */
+            if (key->Handle[0] == '\0')
+                continue;
 
-        /* Case-insensitive substring match on Handle or RealName */
-        if (ci_contains(key->Handle, query) ||
-            ci_contains(key->RealName, query)) {
-            emit_user_summary(&js, key, i + 1, myp);
-            emitted++;
+            /* Case-insensitive substring match on Handle or RealName */
+            if (ci_contains(key->Handle, query) ||
+                ci_contains(key->RealName, query)) {
+                emit_user_summary(&js, key, i + 1, myp);
+                emitted++;
+            }
         }
     }
 
@@ -364,6 +394,86 @@ int cmd_user_find(struct MainPort *myp, int argc, char **argv)
     json_finish(&js);
 
     ReleaseSemaphore(&myp->SEM[1]);
+    return 0;
+}
+
+/* ---- user plan ---- */
+
+#define PLAN_MAX_SIZE 4096
+
+int cmd_user_plan(struct MainPort *myp, int argc, char **argv)
+{
+    struct json_state js;
+    short account;
+    char uucp_buf[12];
+    char path[128];
+    char buf[128];
+    BPTR fh;
+
+    if (argc < 2) {
+        json_error("Usage: cnet-cli user plan <account|handle>");
+        return 1;
+    }
+
+    account = resolve_user(myp, argv[1]);
+    if (account < 0) {
+        json_error("User not found");
+        return 1;
+    }
+
+    /* Read UUCP name from Key[] under SEM[1] shared */
+    ObtainSemaphoreShared(&myp->SEM[1]);
+
+    if (myp->Key[account - 1].UUCP[0] == '\0') {
+        ReleaseSemaphore(&myp->SEM[1]);
+        json_error("No UUCP name for this account");
+        return 1;
+    }
+
+    safe_strcpy(uucp_buf, myp->Key[account - 1].UUCP, sizeof(uucp_buf));
+
+    /* Also grab handle while we have the semaphore */
+    strip_mci(buf, sizeof(buf), myp->Key[account - 1].Handle);
+
+    ReleaseSemaphore(&myp->SEM[1]);
+
+    /* Build path to plan file */
+    snprintf(path, sizeof(path), "mail:users/%s/_plan", uucp_buf);
+
+    json_init(&js, stdout);
+    json_obj_open(&js);
+    json_kv_int(&js, "account", (long)account);
+    json_kv_str(&js, "handle", buf);
+    json_kv_str(&js, "uucp", uucp_buf);
+
+    fh = Open((CONST_STRPTR)path, MODE_OLDFILE);
+    if (!fh) {
+        json_kv_null(&js, "plan");
+    } else {
+        long size;
+        long bytes_read;
+        static char plan_buf[PLAN_MAX_SIZE + 1];
+
+        /* Get file size */
+        Seek(fh, 0, OFFSET_END);
+        size = Seek(fh, 0, OFFSET_BEGINNING);
+        if (size > PLAN_MAX_SIZE)
+            size = PLAN_MAX_SIZE;
+        if (size < 0)
+            size = 0;
+
+        bytes_read = Read(fh, plan_buf, size);
+        Close(fh);
+
+        if (bytes_read < 0)
+            bytes_read = 0;
+        plan_buf[bytes_read] = '\0';
+
+        json_kv_str(&js, "plan", plan_buf);
+    }
+
+    json_obj_close(&js);
+    json_finish(&js);
     return 0;
 }
 
@@ -1069,14 +1179,25 @@ int cmd_olm_send(struct MainPort *myp, int argc, char **argv)
         /* Offset 36: date (LONG, 4 bytes, big-endian) -- UTC */
         /* Offset 35 is padding between UBYTE broadcast and LONG date */
         {
-            struct DateStamp ds;
             unsigned long now;
 
-            DateStamp(&ds);
-            now = 252460800UL  /* Amiga-to-Unix epoch offset */
-                + (unsigned long)ds.ds_Days * 86400UL
-                + (unsigned long)ds.ds_Minute * 60UL
-                + (unsigned long)ds.ds_Tick / 50UL;
+            if (CNet4Base) {
+                /* CNetTime() returns the BBS-native timestamp matching
+                 * the format FileOLM writes to the OLM date field.
+                 * Empirically this is Unix epoch (seconds since
+                 * 1970-01-01), despite the SDK documenting Amiga epoch. */
+                now = (unsigned long)CNetTime();
+            } else {
+                /* Fallback: DateStamp() + epoch math. This has a
+                 * timezone offset bug (DateStamp returns local time,
+                 * not UTC), but is better than no timestamp at all. */
+                struct DateStamp ds;
+                DateStamp(&ds);
+                now = 252460800UL
+                    + (unsigned long)ds.ds_Days * 86400UL
+                    + (unsigned long)ds.ds_Minute * 60UL
+                    + (unsigned long)ds.ds_Tick / 50UL;
+            }
             hdr[36] = (unsigned char)(now >> 24);
             hdr[37] = (unsigned char)(now >> 16);
             hdr[38] = (unsigned char)(now >> 8);

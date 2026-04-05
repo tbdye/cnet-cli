@@ -1,7 +1,7 @@
 /*
  * log.h -- Log file commands for cnet-cli
  *
- * Phase 10: log list, log read, log callers
+ * System log operations: list, read, callers
  */
 
 #ifndef CNET_CLI_LOG_H

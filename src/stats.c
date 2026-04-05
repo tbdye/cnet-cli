@@ -1,7 +1,7 @@
 /*
  * stats.c -- System statistics command for cnet-cli
  *
- * Phase 10: stats
+ * System statistics
  *
  * Reads system counters, SAM/SAG activity data, and boot time from
  * MainPort. SAM and SAG arrays are copied under SEM[18] shared lock; SAG is
@@ -82,32 +82,68 @@ int cmd_stats_show(struct MainPort *myp)
     }
 
     /* SAM: 5 rows x 15 columns */
-    json_key(&js, "sam");
-    json_obj_open(&js);
-    json_key(&js, "data");
-    json_arr_open(&js);
-    for (i = 0; i < 5; i++) {
+    {
+        static const char *sam_row_labels[5] = {
+            "current", "period", "daily", "total", "last_call"
+        };
+        static const char *sam_col_labels[15] = {
+            "feedbacks", "mail_sent", "sysop_mail", "posts", "responses",
+            "group_changes", "pfiles", "new_users",
+            "upload_files", "upload_kb", "download_files", "download_kb",
+            "minutes_used", "minutes_idle", "charges"
+        };
+
+        json_key(&js, "sam");
+        json_obj_open(&js);
+
+        json_key(&js, "row_labels");
         json_arr_open(&js);
-        for (j = 0; j < 15; j++)
-            json_int(&js, sam_copy[i][j]);
+        for (i = 0; i < 5; i++)
+            json_str(&js, sam_row_labels[i]);
         json_arr_close(&js);
+
+        json_key(&js, "column_labels");
+        json_arr_open(&js);
+        for (i = 0; i < 15; i++)
+            json_str(&js, sam_col_labels[i]);
+        json_arr_close(&js);
+
+        json_key(&js, "data");
+        json_arr_open(&js);
+        for (i = 0; i < 5; i++) {
+            json_arr_open(&js);
+            for (j = 0; j < 15; j++)
+                json_int(&js, sam_copy[i][j]);
+            json_arr_close(&js);
+        }
+        json_arr_close(&js);
+        json_obj_close(&js);
     }
-    json_arr_close(&js);
-    json_obj_close(&js);
 
     /* SAG: 2 rows x 72 columns */
-    json_key(&js, "sag");
-    json_obj_open(&js);
-    json_key(&js, "data");
-    json_arr_open(&js);
-    for (i = 0; i < 2; i++) {
+    {
+        static const char *sag_row_labels[2] = { "daily", "hourly" };
+
+        json_key(&js, "sag");
+        json_obj_open(&js);
+
+        json_key(&js, "row_labels");
         json_arr_open(&js);
-        for (j = 0; j < 72; j++)
-            json_uint(&js, sag_copy[i][j]);
+        for (i = 0; i < 2; i++)
+            json_str(&js, sag_row_labels[i]);
         json_arr_close(&js);
+
+        json_key(&js, "data");
+        json_arr_open(&js);
+        for (i = 0; i < 2; i++) {
+            json_arr_open(&js);
+            for (j = 0; j < 72; j++)
+                json_uint(&js, sag_copy[i][j]);
+            json_arr_close(&js);
+        }
+        json_arr_close(&js);
+        json_obj_close(&js);
     }
-    json_arr_close(&js);
-    json_obj_close(&js);
 
     json_obj_close(&js);
     json_finish(&js);
