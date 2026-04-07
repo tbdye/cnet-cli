@@ -26,6 +26,9 @@ int cmd_sub_tree(struct MainPort *myp, int argc, char **argv);
 /* Read operations (continued) */
 int cmd_sub_path(struct MainPort *myp, int argc, char **argv);
 
+/* Read operations (disk usage) */
+int cmd_sub_disk_usage(struct MainPort *myp, int argc, char **argv);
+
 /* Mutation operations */
 int cmd_sub_create(struct MainPort *myp, int argc, char **argv);
 int cmd_sub_edit(struct MainPort *myp, int argc, char **argv);

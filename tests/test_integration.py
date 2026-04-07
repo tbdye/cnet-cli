@@ -31,6 +31,9 @@ TEST_CHILD2_GO = "_test_child2"
 TEST_SINGLE_GO = "_test_single"
 TEST_EDIT_GO = "_test_edit"
 TEST_MSGBOARD_GO = "_test_msgboard"
+TEST_ACCESS_GO = "_test_access"
+TEST_BOOL_GO = "_test_bools"
+TEST_OBITS_GO = "_test_obits"
 
 # Known facts about the live BBS for validation.
 EXPECTED_SERIAL = 26031402
@@ -1373,7 +1376,7 @@ def _run_msg_tests(host, test_physnum):
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 tests: cnet4.library, OLM timestamp, msg move legacy
+# cnet4.library integration and bug fixes
 # ---------------------------------------------------------------------------
 
 def test_cnet4_library(host):
@@ -1399,7 +1402,7 @@ def test_olm_timestamp(host):
 
     This test requires a user online on a port. If no user is online,
     skip. Uses --from 2 (non-sysop) to force the direct I/O fallback
-    where BUG-1 lives.
+    where the timestamp offset bug lives.
     """
     # Check if any port has a user online.
     data, _, rc = run_cli("who", host=host)
@@ -1414,11 +1417,11 @@ def test_olm_timestamp(host):
     # Send OLM from account 2 (non-sysop) to force the direct I/O
     # fallback path. FileOLM only succeeds for account 1 (sysop)
     # from standalone CLI, so --from 2 exercises the code path where
-    # BUG-1 (timestamp offset) lives.
+    # the timestamp offset bug lives.
     olm_args = (
         f'olm {port} '
         f'--from 2 '
-        f'--text "Phase1 timestamp test"'
+        f'--text "OLM timestamp test"'
     )
     data, raw, rc = run_cli(olm_args, host=host)
     assert_true(rc == 0, "olm timestamp: send exit code 0",
@@ -1430,11 +1433,11 @@ def test_olm_timestamp(host):
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 tests
+# Extended read operations
 # ---------------------------------------------------------------------------
 
 def test_sub_show_subop_fields(host):
-    """M-6: SubOpIDs and SubOpAccs arrays in sub show."""
+    """SubOpIDs and SubOpAccs arrays in sub show."""
     data, raw, rc = run_cli("sub show 0", host=host)
     assert_true(rc == 0, "sub show subop: exit code 0")
     assert_true(data is not None, "sub show subop: valid JSON")
@@ -1450,7 +1453,7 @@ def test_sub_show_subop_fields(host):
 
 
 def test_sub_show_activity_dates(host):
-    """M-7: LastUpload and LastMessage dates in sub show."""
+    """LastUpload and LastMessage dates in sub show."""
     data, raw, rc = run_cli("sub show 0", host=host)
     assert_true(rc == 0, "sub show dates: exit code 0")
     assert_true(data is not None, "sub show dates: valid JSON")
@@ -1462,7 +1465,7 @@ def test_sub_show_activity_dates(host):
 
 
 def test_user_plan(host):
-    """M-14: User plan file read."""
+    """User plan file read."""
     # Test with account 1 (sysop -- always exists)
     data, raw, rc = run_cli("user plan 1", host=host)
     assert_true(rc == 0, "user plan: exit code 0", f"got {rc}")
@@ -1475,14 +1478,14 @@ def test_user_plan(host):
 
 
 def test_user_plan_nonexistent(host):
-    """M-14: User plan for nonexistent user."""
+    """User plan for nonexistent user."""
     _, _, rc = run_cli("user plan _no_such_user_", expect_error=True,
                        host=host)
     assert_true(rc != 0, "user plan nonexistent: nonzero exit code")
 
 
 def test_stats_sam_labels(host):
-    """L-5: SAM/SAG human-readable labels."""
+    """SAM/SAG human-readable labels."""
     data, raw, rc = run_cli("stats", host=host)
     assert_true(rc == 0, "stats sam labels: exit code 0")
     assert_true(data is not None, "stats sam labels: valid JSON")
@@ -1505,7 +1508,7 @@ def test_stats_sam_labels(host):
 
 
 def test_user_find_phone(host):
-    """L-6: FindPhone search via --phone flag."""
+    """FindPhone search via --phone flag."""
     # FindPhone with an unlikely number -- just verify the command works
     data, raw, rc = run_cli("user find --phone 0000000", host=host)
     assert_true(rc == 0, "user find --phone: exit code 0", f"got {rc}")
@@ -1517,7 +1520,7 @@ def test_user_find_phone(host):
 
 
 def test_conf_list(host):
-    """L-2: Conference room listing."""
+    """Conference room listing."""
     data, raw, rc = run_cli("conf list", host=host)
     assert_true(rc == 0, "conf list: exit code 0", f"got {rc}")
     assert_true(data is not None, "conf list: valid JSON")
@@ -1529,7 +1532,7 @@ def test_conf_list(host):
 
 
 def test_conf_list_all(host):
-    """L-2: Conference room listing with --all flag."""
+    """Conference room listing with --all flag."""
     data, raw, rc = run_cli("conf list --all", host=host)
     assert_true(rc == 0, "conf list --all: exit code 0", f"got {rc}")
     assert_true(data is not None, "conf list --all: valid JSON")
@@ -1539,7 +1542,7 @@ def test_conf_list_all(host):
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: Group edit and transpose tests
+# Group edit and transpose
 # ---------------------------------------------------------------------------
 
 # Test group number -- use group 31 (typically unused).
@@ -1548,13 +1551,13 @@ TEST_GROUP = 31
 
 def test_group_edit_transpose(host):
     """
-    Test group edit (H-1) and group transpose (H-2).
+    Test group edit and group transpose.
 
     Uses group 31 as a test group. Captures original values, modifies
     them, validates, then restores originals via try/finally.
     """
     print(flush=True)
-    print("=== Phase 3: Group Edit / Transpose ===", flush=True)
+    print("=== Group Edit / Transpose ===", flush=True)
 
     # --- Baseline: capture original group state ---
     orig_data, raw, rc = run_cli(f'group show {TEST_GROUP}', host=host)
@@ -1611,7 +1614,7 @@ def _restore_group(host, orig_name, orig_expire_days,
 
 
 def _test_group_edit_cases(host, orig_data):
-    """H-1 test cases: group edit."""
+    """Test cases: group edit."""
 
     # --- Edit name ---
     data, raw, rc = run_cli(
@@ -1704,7 +1707,7 @@ def _test_group_edit_cases(host, orig_data):
 
 
 def _test_group_transpose_cases(host):
-    """H-2 test cases: group transpose."""
+    """Test cases: group transpose."""
 
     # --- Transpose on an empty/unused group ---
     # First find an unused group (high number, no members).
@@ -1732,6 +1735,1853 @@ def _test_group_transpose_cases(host):
         'group transpose 99', expect_error=True, host=host)
     assert_true(rc != 0, "group transpose invalid group: error exit code",
                 f"got {rc}")
+
+
+# ---------------------------------------------------------------------------
+# Config and control enhancements
+# ---------------------------------------------------------------------------
+
+def test_config_show_extended(host):
+    """Extended config show has smtpd_temp_dir."""
+    data, raw, rc = run_cli("config show", host=host)
+    assert_true(rc == 0, "config show extended: exit code 0", f"got {rc}")
+    assert_true(data is not None, "config show extended: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    network = data.get("network", {})
+    assert_true(isinstance(network, dict),
+                "config show extended: network is object")
+
+    # smtpd_temp_dir is the new field.
+    assert_true("smtpd_temp_dir" in network,
+                "config show extended: smtpd_temp_dir present in network")
+    assert_true(isinstance(network.get("smtpd_temp_dir"), str),
+                "config show extended: smtpd_temp_dir is string",
+                f"got {type(network.get('smtpd_temp_dir')).__name__}")
+
+    # Regression: verify representative existing gc2 fields.
+    assert_true("mail_server" in network,
+                "config show extended: mail_server still present")
+    assert_true("timezone" in network,
+                "config show extended: timezone still present")
+    assert_true("user_cache" in network,
+                "config show extended: user_cache still present")
+    assert_true("port_log_dir" in network,
+                "config show extended: port_log_dir still present")
+
+    # Verify top-level sections are intact.
+    top_sections = [
+        "identity", "limits", "defaults", "paths", "options",
+        "resource_counts", "network", "task_buffer_limits",
+    ]
+    for section in top_sections:
+        assert_true(section in data,
+                    f"config show extended: {section} section present")
+
+
+def test_config_flags_read(host):
+    """Read control panel flags."""
+    data, raw, rc = run_cli("config flags", host=host)
+    assert_true(rc == 0, "config flags read: exit code 0", f"got {rc}")
+    assert_true(data is not None, "config flags read: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    assert_true("flags" in data, "config flags read: has flags object")
+    flags = data.get("flags", {})
+    assert_true(isinstance(flags, dict),
+                "config flags read: flags is object")
+
+    expected_keys = [
+        "doors_closed", "files_closed", "msgs_closed",
+        "no_new_users", "sysop_in",
+    ]
+    # Verify exactly these keys.
+    assert_eq(sorted(flags.keys()), sorted(expected_keys),
+              "config flags read: exactly 5 expected flag keys")
+
+    # Verify all values are booleans.
+    for key in expected_keys:
+        assert_true(isinstance(flags.get(key), bool),
+                    f"config flags read: {key} is bool",
+                    f"got {type(flags.get(key)).__name__}")
+
+
+def test_config_port_loaded(host):
+    """Per-port config for loaded port (port 0)."""
+    data, raw, rc = run_cli("config port 0", host=host)
+    assert_true(rc == 0, "config port loaded: exit code 0", f"got {rc}")
+    assert_true(data is not None, "config port loaded: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    assert_eq(data.get("port"), 0,
+              "config port loaded: port == 0")
+    assert_true(data.get("loaded") is True,
+                "config port loaded: loaded is true",
+                f"got {data.get('loaded')!r}")
+
+    # Verify port_config structure.
+    pc = data.get("port_config")
+    assert_true(isinstance(pc, dict),
+                "config port loaded: port_config is object")
+    if isinstance(pc, dict):
+        pc_keys = [
+            "online", "screen_open", "check", "idle",
+            "offline", "bplanes", "interlace",
+        ]
+        assert_keys(pc, pc_keys,
+                    "config port loaded: port_config has all keys")
+
+    # Verify serial_config structure.
+    sc = data.get("serial_config")
+    assert_true(isinstance(sc, dict),
+                "config port loaded: serial_config is object",
+                f"got {type(sc).__name__}" if sc is not None
+                else "got None")
+    if isinstance(sc, dict):
+        sc_keys = [
+            "device_name", "unit", "idle_who", "port_flags",
+        ]
+        assert_keys(sc, sc_keys,
+                    "config port loaded: serial_config has key fields")
+        assert_true(
+            isinstance(sc.get("device_name"), str)
+            and len(sc.get("device_name", "")) > 0,
+            "config port loaded: device_name is non-empty string",
+            f"got {sc.get('device_name')!r}")
+
+        pf = sc.get("port_flags")
+        assert_true(isinstance(pf, dict),
+                    "config port loaded: port_flags is object")
+        if isinstance(pf, dict):
+            pf_keys = ["show_on_who", "telnetd", "offclose"]
+            assert_keys(pf, pf_keys,
+                        "config port loaded: port_flags has all keys")
+
+
+def test_config_port_unloaded(host):
+    """Per-port config for unloaded port (port 99)."""
+    data, raw, rc = run_cli("config port 99", host=host)
+    assert_true(rc == 0, "config port unloaded: exit code 0", f"got {rc}")
+    assert_true(data is not None, "config port unloaded: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    assert_eq(data.get("port"), 99,
+              "config port unloaded: port == 99")
+    assert_true(data.get("loaded") is False,
+                "config port unloaded: loaded is false",
+                f"got {data.get('loaded')!r}")
+
+    # port_config should still be present (read from disk).
+    assert_true("port_config" in data,
+                "config port unloaded: port_config present")
+
+    # serial_config should be null (no bbsport99 file).
+    assert_true(data.get("serial_config") is None,
+                "config port unloaded: serial_config is null",
+                f"got {data.get('serial_config')!r}")
+
+    # Should have a warning about missing serial config.
+    warnings = data.get("warnings", [])
+    assert_true(
+        any("serial config" in w.lower() or "port 99" in w
+            for w in warnings),
+        "config port unloaded: warning about missing serial config",
+        f"warnings: {warnings}")
+
+
+def test_config_port_invalid(host):
+    """Port number validation (out of range and non-numeric)."""
+    # Out of range: port 100.
+    _, _, rc = run_cli("config port 100", expect_error=True, host=host)
+    assert_true(rc != 0,
+                "config port invalid: port 100 rejected",
+                f"got exit code {rc}")
+
+    # Non-numeric: port abc.
+    _, _, rc = run_cli("config port abc", expect_error=True, host=host)
+    assert_true(rc != 0,
+                "config port invalid: port abc rejected",
+                f"got exit code {rc}")
+
+
+def test_config_flags_invalid(host):
+    """Reject unknown flag name and invalid flag value."""
+    # Unknown flag name.
+    _, _, rc = run_cli("config flags --set bogus_flag=true",
+                       expect_error=True, host=host)
+    assert_true(rc != 0,
+                "config flags invalid: unknown flag rejected",
+                f"got exit code {rc}")
+
+    # Invalid flag value.
+    _, _, rc = run_cli("config flags --set sysop_in=maybe",
+                       expect_error=True, host=host)
+    assert_true(rc != 0,
+                "config flags invalid: bad value rejected",
+                f"got exit code {rc}")
+
+
+def test_config_flags_write(host):
+    """Write and read-back control panel flags."""
+    print(flush=True)
+    print("=== Config/Control Enhancements (Mutations) ===", flush=True)
+
+    # Capture original flag state.
+    orig_data, _, orig_rc = run_cli("config flags", host=host)
+    if orig_rc != 0 or orig_data is None:
+        runner.record("config flags write: capture original state",
+                      False, f"exit code {orig_rc}")
+        return
+
+    orig_flags = orig_data.get("flags", {})
+    orig_sysop = orig_flags.get("sysop_in", False)
+
+    try:
+        # Toggle sysop_in to the opposite.
+        new_val = "false" if orig_sysop else "true"
+        data, raw, rc = run_cli(
+            f'config flags --set sysop_in={new_val}', host=host)
+        assert_true(rc == 0, "config flags write: set exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+        if data is not None:
+            assert_true(data.get("updated") is True,
+                        "config flags write: updated == true",
+                        f"got {data.get('updated')!r}")
+            set_flags = data.get("flags", {})
+            expected_val = not orig_sysop
+            assert_eq(set_flags.get("sysop_in"), expected_val,
+                      "config flags write: sysop_in toggled in response")
+
+        # Read back via separate call.
+        readback, _, rb_rc = run_cli("config flags", host=host)
+        assert_true(rb_rc == 0, "config flags write: readback exit code 0")
+        if readback is not None:
+            rb_flags = readback.get("flags", {})
+            assert_eq(rb_flags.get("sysop_in"), not orig_sysop,
+                      "config flags write: readback confirms toggle")
+
+        # Restore original value.
+        restore_val = "true" if orig_sysop else "false"
+        data, raw, rc = run_cli(
+            f'config flags --set sysop_in={restore_val}', host=host)
+        assert_true(rc == 0, "config flags write: restore exit code 0",
+                    f"got {rc}")
+        if data is not None:
+            set_flags = data.get("flags", {})
+            assert_eq(set_flags.get("sysop_in"), orig_sysop,
+                      "config flags write: sysop_in restored")
+
+        # Multi-flag set: set doors_closed and msgs_closed.
+        orig_doors = orig_flags.get("doors_closed", False)
+        orig_msgs = orig_flags.get("msgs_closed", False)
+
+        data, raw, rc = run_cli(
+            'config flags --set doors_closed=true --set msgs_closed=true',
+            host=host)
+        assert_true(rc == 0,
+                    "config flags write: multi-set exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+        if data is not None:
+            mf = data.get("flags", {})
+            assert_eq(mf.get("doors_closed"), True,
+                      "config flags write: multi doors_closed == true")
+            assert_eq(mf.get("msgs_closed"), True,
+                      "config flags write: multi msgs_closed == true")
+
+        # Readback multi-flag.
+        readback, _, rb_rc = run_cli("config flags", host=host)
+        if rb_rc == 0 and readback is not None:
+            rb = readback.get("flags", {})
+            assert_eq(rb.get("doors_closed"), True,
+                      "config flags write: multi readback doors_closed")
+            assert_eq(rb.get("msgs_closed"), True,
+                      "config flags write: multi readback msgs_closed")
+
+        # Restore both.
+        restore_doors = "true" if orig_doors else "false"
+        restore_msgs = "true" if orig_msgs else "false"
+        data, _, rc = run_cli(
+            f'config flags --set doors_closed={restore_doors} '
+            f'--set msgs_closed={restore_msgs}',
+            host=host)
+        assert_true(rc == 0,
+                    "config flags write: multi-restore exit code 0",
+                    f"got {rc}")
+
+    except Exception as e:
+        runner.record("config flags write: exception", False, str(e))
+        # Best-effort restore on exception.
+        restore_val = "true" if orig_sysop else "false"
+        run_cli(f'config flags --set sysop_in={restore_val}',
+                expect_error=True, host=host)
+
+
+def test_config_reload_text(host):
+    """Trigger BBSTEXT/BBSMENU reload."""
+    data, raw, rc = run_cli("config reload-text", host=host)
+    assert_true(rc == 0, "config reload-text: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    assert_true(data is not None, "config reload-text: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    assert_eq(data.get("action"), "reload-text",
+              "config reload-text: action == reload-text")
+    assert_eq(data.get("status"), "triggered",
+              "config reload-text: status == triggered")
+
+
+# ---------------------------------------------------------------------------
+# Subboard edit extensions
+# ---------------------------------------------------------------------------
+
+def test_sub_show_new_fields(host):
+    """
+    Read-only: verify all extended subboard fields are present in sub show
+    output with correct types.
+    """
+    print(flush=True)
+    print("=== Sub Show Extended Fields ===", flush=True)
+
+    data, raw, rc = run_cli("sub show 0", host=host)
+    assert_true(rc == 0, "sub show extended fields: exit code 0", f"got {rc}")
+    assert_true(data is not None, "sub show extended fields: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    # Access restriction fields (hex bitmasks -> strings).
+    hex_fields = [
+        "hours", "baud_hours", "hour_access", "hour_union_flags",
+        "union_flags",
+    ]
+    for field in hex_fields:
+        assert_true(field in data,
+                    f"sub show extended fields: {field} present")
+        val = data.get(field)
+        assert_true(isinstance(val, str) and val.startswith("0x"),
+                    f"sub show extended fields: {field} is hex string",
+                    f"got {val!r}")
+
+    # Integer fields.
+    int_fields = [
+        "baud", "youngest", "inactive_days", "free_days",
+        "min_free_bytes", "time_credit",
+    ]
+    for field in int_fields:
+        assert_true(field in data,
+                    f"sub show extended fields: {field} present")
+        assert_true(isinstance(data.get(field), int),
+                    f"sub show extended fields: {field} is int",
+                    f"got {type(data.get(field)).__name__}")
+
+    # Gender field (string: "any", "M", or "F").
+    assert_true("gender" in data,
+                "sub show extended fields: gender present")
+    assert_true(data.get("gender") in ("any", "M", "F"),
+                "sub show extended fields: gender is valid string",
+                f"got {data.get('gender')!r}")
+
+    # Boolean flags.
+    bool_fields = [
+        "verification", "dup_check", "show_unvalidated",
+        "no_signatures", "no_read_charges", "no_write_charges",
+        "invitation", "user_must_join", "delete_own",
+        "carbon_copy", "cdrom", "qwk_replies",
+        "persist", "delay", "diz_save",
+    ]
+    for field in bool_fields:
+        assert_true(field in data,
+                    f"sub show extended fields: {field} present")
+        assert_true(isinstance(data.get(field), bool),
+                    f"sub show extended fields: {field} is bool",
+                    f"got {type(data.get(field)).__name__}")
+
+    # Obits bitfield and decomposed booleans.
+    assert_true("obits" in data, "sub show extended fields: obits present")
+    assert_true(isinstance(data.get("obits"), str)
+                and data.get("obits", "").startswith("0x"),
+                "sub show extended fields: obits is hex string",
+                f"got {data.get('obits')!r}")
+
+    obit_bools = [
+        "obit_showbows", "obit_diz_alnum", "obit_diz_strip_chars",
+        "obit_diz_strip_text", "obit_diz_strip_cr",
+    ]
+    for field in obit_bools:
+        assert_true(field in data,
+                    f"sub show extended fields: {field} present")
+        assert_true(isinstance(data.get(field), bool),
+                    f"sub show extended fields: {field} is bool",
+                    f"got {type(data.get(field)).__name__}")
+
+
+def test_sub_edit_access_restrictions(host):
+    """
+    Mutation test: create a test board, exercise access restriction
+    fields (hex bitmasks, integers, gender), then clean up.
+    """
+    print(flush=True)
+    print("=== Sub Edit Extensions ===", flush=True)
+    print("--- Access restrictions ---", flush=True)
+
+    # Create test board.
+    create_args = (
+        f'sub create '
+        f'--title "Test Access" '
+        f'--go {TEST_ACCESS_GO} '
+        f'--type msg '
+        f'--parent {EXPECTED_ROOT_SUB}'
+    )
+    data, raw, rc = run_cli(create_args, host=host)
+    assert_true(rc == 0, "access: create exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if rc != 0 or data is None:
+        return
+    test_physnum = data.get("physnum")
+    if test_physnum is None:
+        return
+
+    try:
+        # --- Step 1: Set hex bitmask fields ---
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--hours 0x000000ff '
+            f'--baud-hours 0x0000ff00 '
+            f'--hour-access 0x00ff0000 '
+            f'--hour-union-flags 0x12345678 '
+            f'--union-flags 0xabcdef01'
+        )
+        data, raw, rc = run_cli(edit_args, host=host)
+        assert_true(rc == 0, "access: set hex fields exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+
+        if data is not None:
+            assert_eq(data.get("hours"), "0x000000ff",
+                      "access: edit response hours")
+            assert_eq(data.get("baud_hours"), "0x0000ff00",
+                      "access: edit response baud_hours")
+            assert_eq(data.get("hour_access"), "0x00ff0000",
+                      "access: edit response hour_access")
+            assert_eq(data.get("hour_union_flags"), "0x12345678",
+                      "access: edit response hour_union_flags")
+            assert_eq(data.get("union_flags"), "0xabcdef01",
+                      "access: edit response union_flags")
+
+        # Read back via sub show.
+        show_data, _, show_rc = run_cli(
+            f'sub show {test_physnum}', host=host)
+        if show_rc == 0 and show_data is not None:
+            assert_eq(show_data.get("hours"), "0x000000ff",
+                      "access: show readback hours")
+            assert_eq(show_data.get("baud_hours"), "0x0000ff00",
+                      "access: show readback baud_hours")
+            assert_eq(show_data.get("hour_access"), "0x00ff0000",
+                      "access: show readback hour_access")
+            assert_eq(show_data.get("hour_union_flags"), "0x12345678",
+                      "access: show readback hour_union_flags")
+            assert_eq(show_data.get("union_flags"), "0xabcdef01",
+                      "access: show readback union_flags")
+
+        # --- Step 2: Set integer fields ---
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--baud 2400 '
+            f'--youngest 18 '
+            f'--inactive-days 90 '
+            f'--free-days 30 '
+            f'--min-free-bytes 100000 '
+            f'--time-credit 50'
+        )
+        data, raw, rc = run_cli(edit_args, host=host)
+        assert_true(rc == 0, "access: set int fields exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+
+        if data is not None:
+            assert_eq(data.get("baud"), 2400,
+                      "access: edit response baud")
+            assert_eq(data.get("youngest"), 18,
+                      "access: edit response youngest")
+            assert_eq(data.get("inactive_days"), 90,
+                      "access: edit response inactive_days")
+            assert_eq(data.get("free_days"), 30,
+                      "access: edit response free_days")
+            assert_eq(data.get("min_free_bytes"), 100000,
+                      "access: edit response min_free_bytes")
+            assert_eq(data.get("time_credit"), 50,
+                      "access: edit response time_credit")
+
+        # Read back via sub show.
+        show_data, _, show_rc = run_cli(
+            f'sub show {test_physnum}', host=host)
+        if show_rc == 0 and show_data is not None:
+            assert_eq(show_data.get("baud"), 2400,
+                      "access: show readback baud")
+            assert_eq(show_data.get("youngest"), 18,
+                      "access: show readback youngest")
+            assert_eq(show_data.get("inactive_days"), 90,
+                      "access: show readback inactive_days")
+            assert_eq(show_data.get("free_days"), 30,
+                      "access: show readback free_days")
+            assert_eq(show_data.get("min_free_bytes"), 100000,
+                      "access: show readback min_free_bytes")
+            assert_eq(show_data.get("time_credit"), 50,
+                      "access: show readback time_credit")
+
+        # --- Step 3: Gender cycling ---
+        for gender_val, expected in [("M", "M"), ("F", "F"),
+                                     ("any", "any")]:
+            data, _, rc = run_cli(
+                f'sub edit {test_physnum} --gender {gender_val}',
+                host=host)
+            assert_true(rc == 0,
+                        f"access: set gender={gender_val} exit code 0",
+                        f"got {rc}")
+            if data is not None:
+                assert_eq(data.get("gender"), expected,
+                          f"access: edit response gender={expected}")
+
+            show_data, _, show_rc = run_cli(
+                f'sub show {test_physnum}', host=host)
+            if show_rc == 0 and show_data is not None:
+                assert_eq(show_data.get("gender"), expected,
+                          f"access: show readback gender={expected}")
+
+        # --- Step 4: Error cases ---
+        _, _, rc = run_cli(
+            f'sub edit {test_physnum} --time-credit 101',
+            expect_error=True, host=host)
+        assert_true(rc != 0,
+                    "access: --time-credit 101 rejected",
+                    f"got exit code {rc}")
+
+        _, _, rc = run_cli(
+            f'sub edit {test_physnum} --youngest 256',
+            expect_error=True, host=host)
+        assert_true(rc != 0,
+                    "access: --youngest 256 rejected",
+                    f"got exit code {rc}")
+
+        _, _, rc = run_cli(
+            f'sub edit {test_physnum} --gender X',
+            expect_error=True, host=host)
+        assert_true(rc != 0,
+                    "access: --gender X rejected",
+                    f"got exit code {rc}")
+
+    finally:
+        # Cleanup.
+        del_data, _, drc = run_cli(f'sub delete {test_physnum}',
+                                    host=host)
+        if drc == 0:
+            runner.record("access: cleanup delete", True)
+        else:
+            run_cli(f'sub delete {test_physnum} --force',
+                    expect_error=True, host=host)
+
+
+def test_sub_edit_boolean_flags(host):
+    """
+    Mutation test: create a test board, exercise boolean flag fields,
+    then clean up.
+    """
+    print(flush=True)
+    print("--- Boolean flags ---", flush=True)
+
+    # Create test board.
+    create_args = (
+        f'sub create '
+        f'--title "Test Booleans" '
+        f'--go {TEST_BOOL_GO} '
+        f'--type msg '
+        f'--parent {EXPECTED_ROOT_SUB}'
+    )
+    data, raw, rc = run_cli(create_args, host=host)
+    assert_true(rc == 0, "bools: create exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if rc != 0 or data is None:
+        return
+    test_physnum = data.get("physnum")
+    if test_physnum is None:
+        return
+
+    try:
+        # --- Step 1: Set first batch of booleans to true ---
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--verification true '
+            f'--invitation true '
+            f'--user-must-join true '
+            f'--delete-own true '
+            f'--persist true '
+            f'--dup-check true'
+        )
+        data, raw, rc = run_cli(edit_args, host=host)
+        assert_true(rc == 0, "bools: set batch 1 true exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+
+        if data is not None:
+            assert_true(data.get("verification") is True,
+                        "bools: edit response verification=true",
+                        f"got {data.get('verification')!r}")
+            assert_true(data.get("invitation") is True,
+                        "bools: edit response invitation=true",
+                        f"got {data.get('invitation')!r}")
+            assert_true(data.get("user_must_join") is True,
+                        "bools: edit response user_must_join=true",
+                        f"got {data.get('user_must_join')!r}")
+            assert_true(data.get("delete_own") is True,
+                        "bools: edit response delete_own=true",
+                        f"got {data.get('delete_own')!r}")
+            assert_true(data.get("persist") is True,
+                        "bools: edit response persist=true",
+                        f"got {data.get('persist')!r}")
+            assert_true(data.get("dup_check") is True,
+                        "bools: edit response dup_check=true",
+                        f"got {data.get('dup_check')!r}")
+
+        # Read back via sub show.
+        show_data, _, show_rc = run_cli(
+            f'sub show {test_physnum}', host=host)
+        if show_rc == 0 and show_data is not None:
+            assert_true(show_data.get("verification") is True,
+                        "bools: show readback verification=true")
+            assert_true(show_data.get("invitation") is True,
+                        "bools: show readback invitation=true")
+            assert_true(show_data.get("user_must_join") is True,
+                        "bools: show readback user_must_join=true")
+            assert_true(show_data.get("delete_own") is True,
+                        "bools: show readback delete_own=true")
+            assert_true(show_data.get("persist") is True,
+                        "bools: show readback persist=true")
+            assert_true(show_data.get("dup_check") is True,
+                        "bools: show readback dup_check=true")
+
+        # --- Step 2: Set them back to false ---
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--verification false '
+            f'--invitation false '
+            f'--user-must-join false '
+            f'--delete-own false '
+            f'--persist false '
+            f'--dup-check false'
+        )
+        data, raw, rc = run_cli(edit_args, host=host)
+        assert_true(rc == 0, "bools: set batch 1 false exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+
+        if data is not None:
+            assert_true(data.get("verification") is False,
+                        "bools: edit response verification=false",
+                        f"got {data.get('verification')!r}")
+            assert_true(data.get("invitation") is False,
+                        "bools: edit response invitation=false",
+                        f"got {data.get('invitation')!r}")
+            assert_true(data.get("user_must_join") is False,
+                        "bools: edit response user_must_join=false",
+                        f"got {data.get('user_must_join')!r}")
+            assert_true(data.get("delete_own") is False,
+                        "bools: edit response delete_own=false",
+                        f"got {data.get('delete_own')!r}")
+            assert_true(data.get("persist") is False,
+                        "bools: edit response persist=false",
+                        f"got {data.get('persist')!r}")
+            assert_true(data.get("dup_check") is False,
+                        "bools: edit response dup_check=false",
+                        f"got {data.get('dup_check')!r}")
+
+        # --- Step 3: Second batch of booleans ---
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--show-unvalidated true '
+            f'--no-signatures true '
+            f'--no-read-charges true '
+            f'--no-write-charges true '
+            f'--carbon-copy false '
+            f'--cdrom true '
+            f'--qwk-replies true '
+            f'--delay true '
+            f'--diz-save true'
+        )
+        data, raw, rc = run_cli(edit_args, host=host)
+        assert_true(rc == 0, "bools: set batch 2 exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+
+        if data is not None:
+            assert_true(data.get("show_unvalidated") is True,
+                        "bools: edit response show_unvalidated=true",
+                        f"got {data.get('show_unvalidated')!r}")
+            assert_true(data.get("no_signatures") is True,
+                        "bools: edit response no_signatures=true",
+                        f"got {data.get('no_signatures')!r}")
+            assert_true(data.get("no_read_charges") is True,
+                        "bools: edit response no_read_charges=true",
+                        f"got {data.get('no_read_charges')!r}")
+            assert_true(data.get("no_write_charges") is True,
+                        "bools: edit response no_write_charges=true",
+                        f"got {data.get('no_write_charges')!r}")
+            assert_true(data.get("carbon_copy") is False,
+                        "bools: edit response carbon_copy=false",
+                        f"got {data.get('carbon_copy')!r}")
+            assert_true(data.get("cdrom") is True,
+                        "bools: edit response cdrom=true",
+                        f"got {data.get('cdrom')!r}")
+            assert_true(data.get("qwk_replies") is True,
+                        "bools: edit response qwk_replies=true",
+                        f"got {data.get('qwk_replies')!r}")
+            assert_true(data.get("delay") is True,
+                        "bools: edit response delay=true",
+                        f"got {data.get('delay')!r}")
+            assert_true(data.get("diz_save") is True,
+                        "bools: edit response diz_save=true",
+                        f"got {data.get('diz_save')!r}")
+
+        # Read back via sub show.
+        show_data, _, show_rc = run_cli(
+            f'sub show {test_physnum}', host=host)
+        if show_rc == 0 and show_data is not None:
+            assert_true(show_data.get("show_unvalidated") is True,
+                        "bools: show readback show_unvalidated=true")
+            assert_true(show_data.get("no_signatures") is True,
+                        "bools: show readback no_signatures=true")
+            assert_true(show_data.get("no_read_charges") is True,
+                        "bools: show readback no_read_charges=true")
+            assert_true(show_data.get("no_write_charges") is True,
+                        "bools: show readback no_write_charges=true")
+            assert_true(show_data.get("carbon_copy") is False,
+                        "bools: show readback carbon_copy=false")
+            assert_true(show_data.get("cdrom") is True,
+                        "bools: show readback cdrom=true")
+            assert_true(show_data.get("qwk_replies") is True,
+                        "bools: show readback qwk_replies=true")
+            assert_true(show_data.get("delay") is True,
+                        "bools: show readback delay=true")
+            assert_true(show_data.get("diz_save") is True,
+                        "bools: show readback diz_save=true")
+
+        # Restore batch 2 to defaults.
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--show-unvalidated false '
+            f'--no-signatures false '
+            f'--no-read-charges false '
+            f'--no-write-charges false '
+            f'--carbon-copy false '
+            f'--cdrom false '
+            f'--qwk-replies false '
+            f'--delay false '
+            f'--diz-save false'
+        )
+        run_cli(edit_args, host=host)
+
+    finally:
+        # Cleanup.
+        del_data, _, drc = run_cli(f'sub delete {test_physnum}',
+                                    host=host)
+        if drc == 0:
+            runner.record("bools: cleanup delete", True)
+        else:
+            run_cli(f'sub delete {test_physnum} --force',
+                    expect_error=True, host=host)
+
+
+def test_sub_edit_obits_flags(host):
+    """
+    Mutation test: create a test board, exercise obits bitfield flags,
+    verify raw obits hex value, then clean up.
+    """
+    print(flush=True)
+    print("--- Obits bitfield ---", flush=True)
+
+    # Create test board.
+    create_args = (
+        f'sub create '
+        f'--title "Test Obits" '
+        f'--go {TEST_OBITS_GO} '
+        f'--type msg '
+        f'--parent {EXPECTED_ROOT_SUB}'
+    )
+    data, raw, rc = run_cli(create_args, host=host)
+    assert_true(rc == 0, "obits: create exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if rc != 0 or data is None:
+        return
+    test_physnum = data.get("physnum")
+    if test_physnum is None:
+        return
+
+    try:
+        # --- Step 1: Set showbows + diz_alnum + strip_cr ---
+        # Expected raw obits = 0x01 | 0x02 | 0x10 = 0x13
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--obit-showbows true '
+            f'--obit-diz-alnum true '
+            f'--obit-diz-strip-cr true'
+        )
+        data, raw, rc = run_cli(edit_args, host=host)
+        assert_true(rc == 0, "obits: set flags exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+
+        if data is not None:
+            assert_true(data.get("obit_showbows") is True,
+                        "obits: edit response showbows=true",
+                        f"got {data.get('obit_showbows')!r}")
+            assert_true(data.get("obit_diz_alnum") is True,
+                        "obits: edit response diz_alnum=true",
+                        f"got {data.get('obit_diz_alnum')!r}")
+            assert_true(data.get("obit_diz_strip_cr") is True,
+                        "obits: edit response strip_cr=true",
+                        f"got {data.get('obit_diz_strip_cr')!r}")
+            assert_true(data.get("obit_diz_strip_chars") is False,
+                        "obits: edit response strip_chars=false",
+                        f"got {data.get('obit_diz_strip_chars')!r}")
+            assert_true(data.get("obit_diz_strip_text") is False,
+                        "obits: edit response strip_text=false",
+                        f"got {data.get('obit_diz_strip_text')!r}")
+            assert_eq(data.get("obits"), "0x00000013",
+                      "obits: edit response raw obits == 0x00000013")
+
+        # --- Step 2: Read back via sub show ---
+        show_data, _, show_rc = run_cli(
+            f'sub show {test_physnum}', host=host)
+        if show_rc == 0 and show_data is not None:
+            assert_eq(show_data.get("obits"), "0x00000013",
+                      "obits: show readback raw obits == 0x00000013")
+            assert_true(show_data.get("obit_showbows") is True,
+                        "obits: show readback showbows=true")
+            assert_true(show_data.get("obit_diz_alnum") is True,
+                        "obits: show readback diz_alnum=true")
+            assert_true(show_data.get("obit_diz_strip_cr") is True,
+                        "obits: show readback strip_cr=true")
+
+        # --- Step 3: Clear all obits ---
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--obit-showbows false '
+            f'--obit-diz-alnum false '
+            f'--obit-diz-strip-cr false'
+        )
+        data, raw, rc = run_cli(edit_args, host=host)
+        assert_true(rc == 0, "obits: clear flags exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+
+        if data is not None:
+            assert_eq(data.get("obits"), "0x00000000",
+                      "obits: edit response raw obits == 0x00000000")
+            assert_true(data.get("obit_showbows") is False,
+                        "obits: edit response showbows=false after clear",
+                        f"got {data.get('obit_showbows')!r}")
+            assert_true(data.get("obit_diz_alnum") is False,
+                        "obits: edit response diz_alnum=false after clear",
+                        f"got {data.get('obit_diz_alnum')!r}")
+            assert_true(data.get("obit_diz_strip_cr") is False,
+                        "obits: edit response strip_cr=false after clear",
+                        f"got {data.get('obit_diz_strip_cr')!r}")
+
+        # Read back to confirm all zeros.
+        show_data, _, show_rc = run_cli(
+            f'sub show {test_physnum}', host=host)
+        if show_rc == 0 and show_data is not None:
+            assert_eq(show_data.get("obits"), "0x00000000",
+                      "obits: show readback raw obits == 0x00000000")
+
+    finally:
+        # Cleanup.
+        del_data, _, drc = run_cli(f'sub delete {test_physnum}',
+                                    host=host)
+        if drc == 0:
+            runner.record("obits: cleanup delete", True)
+        else:
+            run_cli(f'sub delete {test_physnum} --force',
+                    expect_error=True, host=host)
+
+
+# ---------------------------------------------------------------------------
+# Utility integrations
+# ---------------------------------------------------------------------------
+
+TEST_ACCESS_EDIT_GO = "_test_acsedit"
+
+
+def test_sub_show_access_groups(host):
+    """access_groups field present in sub show as a string."""
+    print(flush=True)
+    print("=== Utility Integrations ===", flush=True)
+
+    data, raw, rc = run_cli("sub show 0", host=host)
+    assert_true(rc == 0, "sub show access_groups: exit code 0", f"got {rc}")
+    assert_true(data is not None, "sub show access_groups: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    # All 8 _groups fields must be present as strings.
+    groups_fields = [
+        "access_groups", "post_access_groups", "respond_access_groups",
+        "upload_access_groups", "download_access_groups",
+        "hour_access_groups", "hour_union_flags_groups",
+        "union_flags_groups",
+    ]
+    for field in groups_fields:
+        assert_true(field in data,
+                    f"sub show access_groups: {field} present")
+        assert_true(isinstance(data.get(field), str),
+                    f"sub show access_groups: {field} is string",
+                    f"got {type(data.get(field)).__name__}")
+
+
+def test_sub_list_no_access_groups(host):
+    """access_groups NOT in sub list (lean view)."""
+    data, raw, rc = run_cli("sub list --active", host=host)
+    assert_true(rc == 0, "sub list no access_groups: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None, "sub list no access_groups: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    subs = data.get("subboards", [])
+    assert_true(len(subs) > 0,
+                "sub list no access_groups: non-empty list")
+    if subs:
+        first = subs[0]
+        assert_true("access_groups" not in first,
+                    "sub list no access_groups: access_groups absent "
+                    "from list entry",
+                    f"found access_groups={first.get('access_groups')!r}")
+
+
+def test_group_show_access_groups(host):
+    """group show has _groups fields under privileges."""
+    data, raw, rc = run_cli("group show 0", host=host)
+    assert_true(rc == 0, "group show access_groups: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None, "group show access_groups: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    privs = data.get("privileges", {})
+    assert_true(isinstance(privs, dict),
+                "group show access_groups: privileges is object")
+
+    for field in ["mbase_flags_groups", "fbase_flags_groups",
+                  "lbase_flags_groups"]:
+        assert_true(field in privs,
+                    f"group show access_groups: {field} present",
+                    f"privileges keys: {list(privs.keys())}")
+        assert_true(isinstance(privs.get(field), str),
+                    f"group show access_groups: {field} is string",
+                    f"got {type(privs.get(field)).__name__}")
+
+
+def test_group_list_no_access_groups(host):
+    """group list does NOT have _groups fields."""
+    data, raw, rc = run_cli("group list", host=host)
+    assert_true(rc == 0, "group list no access_groups: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None, "group list no access_groups: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    groups = data.get("groups", [])
+    assert_true(len(groups) > 0,
+                "group list no access_groups: non-empty list")
+    # Check all entries -- none should have _groups fields.
+    has_groups_field = False
+    for entry in groups:
+        if "mbase_flags_groups" in entry:
+            has_groups_field = True
+            break
+    assert_true(not has_groups_field,
+                "group list no access_groups: mbase_flags_groups absent "
+                "from all list entries")
+
+
+def test_user_show_address_type(host):
+    """user show has address_type field."""
+    data, raw, rc = run_cli("user show 1", host=host)
+    assert_true(rc == 0, "user show address_type: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None, "user show address_type: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    assert_true("address_type" in data,
+                "user show address_type: field present")
+    atype = data.get("address_type")
+    assert_true(isinstance(atype, str),
+                "user show address_type: is string",
+                f"got {type(atype).__name__}")
+    assert_true(atype in ("local", "internet", "unknown"),
+                "user show address_type: valid value",
+                f"got {atype!r}")
+
+
+def test_sub_disk_usage(host):
+    """sub disk-usage returns size info for a valid subboard."""
+    data, raw, rc = run_cli("sub disk-usage 0", host=host)
+    assert_true(rc == 0, "sub disk-usage: exit code 0", f"got {rc}")
+    assert_true(data is not None, "sub disk-usage: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    required_keys = ["physnum", "title", "data_path", "bytes"]
+    assert_keys(data, required_keys, "sub disk-usage: has required keys")
+
+    assert_eq(data.get("physnum"), 0,
+              "sub disk-usage: physnum == 0")
+    assert_true(isinstance(data.get("bytes"), int),
+                "sub disk-usage: bytes is integer",
+                f"got {type(data.get('bytes')).__name__}")
+    assert_true(data.get("bytes", -1) >= 0,
+                "sub disk-usage: bytes >= 0",
+                f"got {data.get('bytes')}")
+    assert_true(isinstance(data.get("data_path"), str)
+                and len(data.get("data_path", "")) > 0,
+                "sub disk-usage: data_path is non-empty string",
+                f"got {data.get('data_path')!r}")
+
+
+def test_sub_disk_usage_invalid(host):
+    """sub disk-usage rejects invalid subboard number."""
+    _, _, rc = run_cli("sub disk-usage 999", expect_error=True, host=host)
+    assert_true(rc != 0, "sub disk-usage invalid: nonzero exit code",
+                f"got {rc}")
+
+
+def test_sub_edit_access_groups_mutation(host):
+    """
+    Create test board, set access via group string,
+    verify access hex and access_groups, test hex backward compat,
+    then clean up.
+    """
+    print(flush=True)
+    print("--- Access group conversion ---", flush=True)
+
+    # Create test board.
+    create_args = (
+        f'sub create '
+        f'--title "Test Access Groups" '
+        f'--go {TEST_ACCESS_EDIT_GO} '
+        f'--type msg '
+        f'--parent {EXPECTED_ROOT_SUB}'
+    )
+    data, raw, rc = run_cli(create_args, host=host)
+    assert_true(rc == 0, "access groups: create exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    if rc != 0 or data is None:
+        return
+    test_physnum = data.get("physnum")
+    if test_physnum is None:
+        return
+
+    try:
+        # --- Step 1: Set access via group string "0-3,5,10" ---
+        # Expected: bits 0,1,2,3,5,10 = 0x0000042f
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--access 0-3,5,10'
+        )
+        data, raw, rc = run_cli(edit_args, host=host)
+        assert_true(rc == 0,
+                    "access groups: set via group string exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+
+        if data is not None:
+            assert_eq(data.get("access"), "0x0000042f",
+                      "access groups: edit response access == 0x0000042f")
+            assert_eq(data.get("access_groups"), "0-3,5,10",
+                      "access groups: edit response access_groups == 0-3,5,10")
+
+        # Read back via sub show.
+        show_data, _, show_rc = run_cli(
+            f'sub show {test_physnum}', host=host)
+        if show_rc == 0 and show_data is not None:
+            assert_eq(show_data.get("access"), "0x0000042f",
+                      "access groups: show readback access == 0x0000042f")
+            assert_eq(show_data.get("access_groups"), "0-3,5,10",
+                      "access groups: show readback access_groups == 0-3,5,10")
+
+        # --- Step 2: Backward compat -- set via hex ---
+        edit_args = (
+            f'sub edit {test_physnum} '
+            f'--access 0xffffffff'
+        )
+        data, raw, rc = run_cli(edit_args, host=host)
+        assert_true(rc == 0,
+                    "access groups: set via hex exit code 0",
+                    f"got {rc}, raw: {raw[:200]!r}")
+
+        if data is not None:
+            assert_eq(data.get("access"), "0xffffffff",
+                      "access groups: edit response access == 0xffffffff")
+            # All 32 groups set -> "0-31"
+            assert_eq(data.get("access_groups"), "0-31",
+                      "access groups: edit response access_groups == 0-31")
+
+    finally:
+        # Cleanup.
+        del_data, _, drc = run_cli(f'sub delete {test_physnum}',
+                                    host=host)
+        if drc == 0:
+            runner.record("access groups: cleanup delete", True)
+        else:
+            run_cli(f'sub delete {test_physnum} --force',
+                    expect_error=True, host=host)
+
+
+def test_file_validate_range(host):
+    """
+    file validate with --range all on a file subboard.
+    Skipped if no file subboards exist.
+    """
+    print(flush=True)
+    print("--- File validate range ---", flush=True)
+
+    # Find a file subboard.
+    list_data, _, list_rc = run_cli("sub list --type file", host=host)
+    if list_rc != 0 or list_data is None:
+        runner.skip("file validate range: cannot fetch file subboard list")
+        return
+
+    file_subs = list_data.get("subboards", [])
+    if not file_subs:
+        runner.skip("file validate range: no file subboards exist")
+        return
+
+    # Use the first file subboard.
+    physnum = file_subs[0]["physnum"]
+
+    data, raw, rc = run_cli(
+        f'file validate {physnum} --range all', host=host)
+    assert_true(rc == 0, "file validate range: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    assert_true(data is not None, "file validate range: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+
+    if data is not None:
+        assert_eq(data.get("status"), "validated",
+                  "file validate range: status == validated")
+        assert_eq(data.get("physnum"), physnum,
+                  f"file validate range: physnum == {physnum}")
+        assert_true("total_in_range" in data,
+                    "file validate range: has total_in_range")
+        assert_true(isinstance(data.get("total_in_range"), int),
+                    "file validate range: total_in_range is int",
+                    f"got {type(data.get('total_in_range')).__name__}")
+
+
+# ---------------------------------------------------------------------------
+# Event commands
+# ---------------------------------------------------------------------------
+
+def test_event_list_empty(host):
+    """event list with no events.cfg returns empty array."""
+    data, raw, rc = run_cli("event list", host=host)
+    assert_true(rc == 0, "event list empty: exit code 0", f"got {rc}")
+    assert_true(data is not None, "event list empty: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+    assert_true("events" in data, "event list empty: has 'events' key")
+    events = data.get("events", None)
+    assert_true(isinstance(events, list) and len(events) == 0,
+                "event list empty: events is empty array",
+                f"got {events!r}")
+    assert_eq(data.get("count"), 0, "event list empty: count == 0")
+
+
+def test_event_list_all_empty(host):
+    """event list --all with no events.cfg returns empty array."""
+    data, raw, rc = run_cli("event list --all", host=host)
+    assert_true(rc == 0, "event list --all empty: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None, "event list --all empty: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+    assert_true("events" in data,
+                "event list --all empty: has 'events' key")
+    events = data.get("events", None)
+    assert_true(isinstance(events, list) and len(events) == 0,
+                "event list --all empty: events is empty array",
+                f"got {events!r}")
+    assert_eq(data.get("count"), 0,
+              "event list --all empty: count == 0")
+
+
+def test_event_show_no_events(host):
+    """event show with no events.cfg returns error."""
+    # Error JSON goes to Amiga stderr (not captured by amigactl exec).
+    # We can only verify non-zero exit code.
+    _, _, rc = run_cli("event show 0", expect_error=True, host=host)
+    assert_true(rc != 0, "event show no events: nonzero exit code",
+                f"got {rc}")
+
+
+def test_event_show_negative_index(host):
+    """event show -1 is rejected (not all digits)."""
+    # "-1" fails all_digits() check -> usage error on stderr, exit code 1.
+    _, _, rc = run_cli("event show -1", expect_error=True, host=host)
+    assert_true(rc != 0, "event show negative index: nonzero exit code",
+                f"got {rc}")
+
+
+# ---------------------------------------------------------------------------
+# File and log enhancements
+# ---------------------------------------------------------------------------
+
+def test_file_missing_all(host):
+    """file missing scans all file subboards, returns JSON summary."""
+    data, raw, rc = run_cli("file missing", host=host)
+    assert_true(rc == 0, "file missing all: exit code 0", f"got {rc}")
+    assert_true(data is not None, "file missing all: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    # Top-level keys.
+    required_keys = ["missing", "restored", "summary"]
+    if not assert_keys(data, required_keys,
+                       "file missing all: has required keys"):
+        return
+
+    assert_true(isinstance(data["missing"], list),
+                "file missing all: missing is array")
+    assert_true(isinstance(data["restored"], list),
+                "file missing all: restored is array")
+
+    # With 0 items in file subboards, both arrays should be empty.
+    assert_eq(len(data["missing"]), 0,
+              "file missing all: missing array empty (no files uploaded)")
+    assert_eq(len(data["restored"]), 0,
+              "file missing all: restored array empty")
+
+    # Summary validation.
+    summary = data.get("summary", {})
+    summary_keys = [
+        "subboards_scanned", "items_scanned", "missing_count",
+        "restored_count",
+    ]
+    if not assert_keys(summary, summary_keys,
+                       "file missing all: summary has required keys"):
+        return
+
+    assert_true(isinstance(summary["subboards_scanned"], int)
+                and summary["subboards_scanned"] > 0,
+                "file missing all: subboards_scanned > 0",
+                f"got {summary['subboards_scanned']}")
+    assert_true(isinstance(summary["items_scanned"], int)
+                and summary["items_scanned"] >= 0,
+                "file missing all: items_scanned >= 0",
+                f"got {summary['items_scanned']}")
+    assert_eq(summary["missing_count"], 0,
+              "file missing all: missing_count == 0")
+    assert_eq(summary["restored_count"], 0,
+              "file missing all: restored_count == 0")
+
+
+def test_file_missing_specific_sub(host):
+    """file missing on a specific file subboard by physnum."""
+    # Find a file subboard to target.
+    list_data, _, list_rc = run_cli("sub list --type file", host=host)
+    if list_rc != 0 or list_data is None:
+        runner.skip("file missing specific sub: "
+                    "cannot fetch file subboard list")
+        return
+
+    file_subs = list_data.get("subboards", [])
+    if not file_subs:
+        runner.skip("file missing specific sub: no file subboards exist")
+        return
+
+    physnum = file_subs[0]["physnum"]
+
+    data, raw, rc = run_cli(f'file missing {physnum}', host=host)
+    assert_true(rc == 0, "file missing specific sub: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None, "file missing specific sub: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_true("missing" in data,
+                "file missing specific sub: has 'missing' key")
+    assert_true("summary" in data,
+                "file missing specific sub: has 'summary' key")
+
+    summary = data.get("summary", {})
+    assert_eq(summary.get("subboards_scanned"), 1,
+              "file missing specific sub: subboards_scanned == 1")
+
+
+def test_file_missing_invalid_sub(host):
+    """file missing on nonexistent subboard returns error."""
+    _, _, rc = run_cli("file missing 999", expect_error=True, host=host)
+    assert_true(rc != 0, "file missing invalid sub: nonzero exit code",
+                f"got {rc}")
+
+
+def test_file_missing_msg_sub(host):
+    """file missing on a message subboard returns error."""
+    # Physnum 0 is always a MsgBase on the live BBS.
+    _, _, rc = run_cli("file missing 0", expect_error=True, host=host)
+    assert_true(rc != 0,
+                "file missing msg sub: nonzero exit code (not a file area)",
+                f"got {rc}")
+
+
+def test_log_callers_parsed(host):
+    """log callers-parsed returns parsed call records."""
+    data, raw, rc = run_cli("log callers-parsed", host=host)
+    assert_true(rc == 0, "log callers-parsed: exit code 0", f"got {rc}")
+    assert_true(data is not None, "log callers-parsed: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    required_keys = ["records", "count", "truncated"]
+    if not assert_keys(data, required_keys,
+                       "log callers-parsed: has required keys"):
+        return
+
+    assert_true(isinstance(data["records"], list),
+                "log callers-parsed: records is array")
+    assert_true(isinstance(data["count"], int) and data["count"] > 0,
+                "log callers-parsed: count > 0",
+                f"got {data['count']}")
+    assert_true(isinstance(data["truncated"], bool),
+                "log callers-parsed: truncated is bool",
+                f"got {type(data['truncated']).__name__}")
+    assert_true(len(data["records"]) == data["count"],
+                "log callers-parsed: records length matches count",
+                f"records={len(data['records'])}, count={data['count']}")
+
+
+def test_log_callers_parsed_tail(host):
+    """log callers-parsed --tail 3 returns exactly 3 records."""
+    data, raw, rc = run_cli("log callers-parsed --tail 3", host=host)
+    assert_true(rc == 0, "log callers-parsed --tail 3: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None,
+                "log callers-parsed --tail 3: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    assert_eq(data.get("count"), 3,
+              "log callers-parsed --tail 3: count == 3")
+    assert_true(isinstance(data.get("records"), list)
+                and len(data["records"]) == 3,
+                "log callers-parsed --tail 3: records length == 3",
+                f"got {len(data.get('records', []))}")
+
+
+def test_log_callers_parsed_record_structure(host):
+    """log callers-parsed record has expected field structure."""
+    data, raw, rc = run_cli("log callers-parsed --tail 1", host=host)
+    assert_true(rc == 0,
+                "log callers-parsed record structure: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None,
+                "log callers-parsed record structure: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    records = data.get("records", [])
+    if not records:
+        runner.skip("log callers-parsed record structure: no records")
+        return
+
+    rec = records[0]
+    # Required fields on every record.
+    record_keys = ["date", "time", "port", "connect", "events"]
+    if not assert_keys(rec, record_keys,
+                       "log callers-parsed record structure: "
+                       "has required keys"):
+        return
+
+    assert_true(isinstance(rec["date"], str) and len(rec["date"]) > 0,
+                "log callers-parsed record: date is non-empty string",
+                f"got {rec['date']!r}")
+    assert_true(isinstance(rec["time"], str) and len(rec["time"]) > 0,
+                "log callers-parsed record: time is non-empty string",
+                f"got {rec['time']!r}")
+    assert_true(isinstance(rec["port"], int) and rec["port"] >= 0,
+                "log callers-parsed record: port is non-negative int",
+                f"got {rec['port']}")
+    assert_true(isinstance(rec["connect"], str),
+                "log callers-parsed record: connect is string",
+                f"got {type(rec['connect']).__name__}")
+    assert_true(isinstance(rec["events"], list),
+                "log callers-parsed record: events is array",
+                f"got {type(rec['events']).__name__}")
+
+    # Validate event structure if events exist.
+    if rec["events"]:
+        ev = rec["events"][0]
+        event_keys = ["time", "event"]
+        assert_keys(ev, event_keys,
+                    "log callers-parsed record: event has time+event keys")
+
+
+def test_log_callers_parsed_tail_1(host):
+    """log callers-parsed --tail 1 returns exactly 1 record."""
+    data, raw, rc = run_cli("log callers-parsed --tail 1", host=host)
+    assert_true(rc == 0, "log callers-parsed --tail 1: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None,
+                "log callers-parsed --tail 1: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+    if data is None:
+        return
+
+    assert_eq(data.get("count"), 1,
+              "log callers-parsed --tail 1: count == 1")
+    assert_true(isinstance(data.get("records"), list)
+                and len(data["records"]) == 1,
+                "log callers-parsed --tail 1: records length == 1",
+                f"got {len(data.get('records', []))}")
+
+
+# ---------------------------------------------------------------------------
+# Maintenance Operations
+# ---------------------------------------------------------------------------
+
+def test_maint_pointers(host):
+    """maint pointers rebuilds index files."""
+    print(flush=True)
+    print("=== Maintenance Operations ===", flush=True)
+
+    data, raw, rc = run_cli("maint pointers", host=host)
+
+    assert_true(rc == 0, "maint pointers: exit code 0", f"got {rc}")
+    assert_true(data is not None, "maint pointers: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_eq(data.get("command"), "maint_pointers",
+              "maint pointers: command == maint_pointers")
+    assert_true(isinstance(data.get("accounts"), int)
+                and data["accounts"] > 0,
+                "maint pointers: accounts > 0",
+                f"got {data.get('accounts')!r}")
+    assert_true(isinstance(data.get("iname_entries"), int)
+                and data["iname_entries"] >= 0,
+                "maint pointers: iname_entries >= 0",
+                f"got {data.get('iname_entries')!r}")
+    assert_true(isinstance(data.get("iphone_entries"), int)
+                and data["iphone_entries"] >= 0,
+                "maint pointers: iphone_entries >= 0",
+                f"got {data.get('iphone_entries')!r}")
+
+    # files_written should be a list of exactly 4 known filenames.
+    files = data.get("files_written")
+    assert_true(isinstance(files, list) and len(files) == 4,
+                "maint pointers: files_written is list of 4",
+                f"got {files!r}")
+    expected_files = ["bbs.ukeys4", "bbs.uind1", "bbs.uind2", "bbs.sdata"]
+    if isinstance(files, list):
+        assert_eq(files, expected_files,
+                  "maint pointers: files_written matches expected")
+
+    # warnings should be an empty list.
+    assert_eq(data.get("warnings"), [],
+              "maint pointers: warnings is empty list")
+
+
+def test_maint_count_dry_run(host):
+    """maint count --dry-run scans all subboards without applying."""
+    data, raw, rc = run_cli("maint count --dry-run", host=host)
+
+    assert_true(rc == 0, "maint count --dry-run: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None, "maint count --dry-run: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_eq(data.get("command"), "maint_count",
+              "maint count --dry-run: command == maint_count")
+    assert_eq(data.get("mode"), "dry-run",
+              "maint count --dry-run: mode == dry-run")
+
+    # changes key must exist and be a list.
+    changes = data.get("changes")
+    assert_true(isinstance(changes, list),
+                "maint count --dry-run: changes is a list",
+                f"got {type(changes).__name__}" if changes is not None
+                else "key missing")
+
+    assert_true(isinstance(data.get("subboards_scanned"), int)
+                and data["subboards_scanned"] > 0,
+                "maint count --dry-run: subboards_scanned > 0",
+                f"got {data.get('subboards_scanned')!r}")
+    assert_true(isinstance(data.get("subboards_skipped"), int)
+                and data["subboards_skipped"] >= 0,
+                "maint count --dry-run: subboards_skipped >= 0",
+                f"got {data.get('subboards_skipped')!r}")
+
+    # Nested nums structure.
+    nums = data.get("nums", {})
+    ca = nums.get("current_accounts", {})
+    assert_true(isinstance(ca.get("old"), int) and ca["old"] > 0,
+                "maint count --dry-run: nums.current_accounts.old > 0",
+                f"got {ca.get('old')!r}")
+    ia = nums.get("inuse_accounts", {})
+    assert_true(isinstance(ia.get("old"), int) and ia["old"] > 0,
+                "maint count --dry-run: nums.inuse_accounts.old > 0",
+                f"got {ia.get('old')!r}")
+
+
+def test_maint_count_single_sub(host):
+    """maint count --sub General --dry-run scans only one subboard."""
+    data, raw, rc = run_cli("maint count --sub General --dry-run", host=host)
+
+    assert_true(rc == 0, "maint count --sub General: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None, "maint count --sub General: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_eq(data.get("command"), "maint_count",
+              "maint count --sub General: command == maint_count")
+    assert_eq(data.get("subboards_scanned"), 1,
+              "maint count --sub General: subboards_scanned == 1")
+
+
+def test_maint_repair_mail_dry_run(host):
+    """maint repair-mail --all --dry-run scans all users without applying."""
+    data, raw, rc = run_cli("maint repair-mail --all --dry-run", host=host)
+
+    assert_true(rc == 0, "maint repair-mail --all --dry-run: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None,
+                "maint repair-mail --all --dry-run: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_eq(data.get("command"), "maint_repair_mail",
+              "maint repair-mail --all --dry-run: command == maint_repair_mail")
+    assert_eq(data.get("mode"), "dry-run",
+              "maint repair-mail --all --dry-run: mode == dry-run")
+
+    users = data.get("users")
+    assert_true(isinstance(users, list) and len(users) > 0,
+                "maint repair-mail --all --dry-run: users is non-empty list",
+                f"got {type(users).__name__}, len={len(users) if isinstance(users, list) else 'N/A'}")
+
+    assert_true(isinstance(data.get("users_scanned"), int)
+                and data["users_scanned"] > 0,
+                "maint repair-mail --all --dry-run: users_scanned > 0",
+                f"got {data.get('users_scanned')!r}")
+    assert_true(isinstance(data.get("total_bytes_reclaimed"), int)
+                and data["total_bytes_reclaimed"] >= 0,
+                "maint repair-mail --all --dry-run: total_bytes_reclaimed >= 0",
+                f"got {data.get('total_bytes_reclaimed')!r}")
+
+
+def test_maint_repair_mail_single_user(host):
+    """maint repair-mail 1 --dry-run scans only account #1 (sysop)."""
+    data, raw, rc = run_cli("maint repair-mail 1 --dry-run", host=host)
+
+    assert_true(rc == 0,
+                "maint repair-mail 1 --dry-run: exit code 0",
+                f"got {rc}")
+    assert_true(data is not None,
+                "maint repair-mail 1 --dry-run: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_eq(data.get("command"), "maint_repair_mail",
+              "maint repair-mail 1 --dry-run: command == maint_repair_mail")
+
+    users = data.get("users")
+    assert_true(isinstance(users, list) and len(users) == 1,
+                "maint repair-mail 1 --dry-run: users list has exactly 1 entry",
+                f"got len={len(users) if isinstance(users, list) else 'N/A'}")
+
+
+def test_maint_repair_sub_unavailable(host):
+    """maint repair-sub returns an error (not yet available)."""
+    # repair-sub outputs error JSON to stdout but returns exit code 1.
+    # run_cli returns (None, stdout, exit_code) for non-zero exits,
+    # so we parse the JSON from raw stdout.
+    _, raw, rc = run_cli("maint repair-sub Feedback", host=host)
+
+    assert_true(rc != 0,
+                "maint repair-sub unavailable: exit code != 0",
+                f"got {rc}")
+
+    # Parse error JSON from stdout.
+    err_data = None
+    if raw:
+        try:
+            err_data = json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+
+    assert_true(err_data is not None and "error" in err_data,
+                "maint repair-sub unavailable: response has 'error' key",
+                f"raw: {raw[:200]!r}" if err_data is None else "")
+
+    if err_data and "error" in err_data:
+        assert_true("not yet available" in err_data["error"],
+                    "maint repair-sub unavailable: error contains "
+                    "'not yet available'",
+                    f"got: {err_data['error']!r}")
+
+
+# ---------------------------------------------------------------------------
+# BBSList, vote, and mail alias commands
+# ---------------------------------------------------------------------------
+
+def test_bbslist_list(host):
+    """bbslist list returns JSON with entries array."""
+    print(flush=True)
+    print("=== BBSList Commands ===", flush=True)
+
+    data, raw, rc = run_cli("bbslist list", host=host)
+
+    assert_true(rc == 0, "bbslist list: exit code 0", f"got {rc}")
+    assert_true(data is not None, "bbslist list: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_true("entries" in data, "bbslist list: has 'entries' key")
+    entries = data.get("entries")
+    assert_true(isinstance(entries, list),
+                "bbslist list: entries is array",
+                f"got {type(entries).__name__}")
+    assert_true("count" in data, "bbslist list: has 'count' key")
+    assert_true(isinstance(data.get("count"), int)
+                and data["count"] >= 0,
+                "bbslist list: count is int >= 0",
+                f"got {data.get('count')!r}")
+    assert_true("total_records" in data,
+                "bbslist list: has 'total_records' key")
+
+
+def test_bbslist_list_all(host):
+    """bbslist list --all returns JSON with entries array."""
+    data, raw, rc = run_cli("bbslist list --all", host=host)
+
+    assert_true(rc == 0, "bbslist list --all: exit code 0", f"got {rc}")
+    assert_true(data is not None, "bbslist list --all: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_true("entries" in data, "bbslist list --all: has 'entries' key")
+    entries = data.get("entries")
+    assert_true(isinstance(entries, list),
+                "bbslist list --all: entries is array",
+                f"got {type(entries).__name__}")
+
+
+def test_vote_list(host):
+    """vote list returns JSON with topics array."""
+    print(flush=True)
+    print("=== Vote Commands ===", flush=True)
+
+    data, raw, rc = run_cli("vote list", host=host)
+
+    assert_true(rc == 0, "vote list: exit code 0", f"got {rc}")
+    assert_true(data is not None, "vote list: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_true("topics" in data, "vote list: has 'topics' key")
+    topics = data.get("topics")
+    assert_true(isinstance(topics, list),
+                "vote list: topics is array",
+                f"got {type(topics).__name__}")
+    assert_true("count" in data, "vote list: has 'count' key")
+    assert_true(isinstance(data.get("count"), int)
+                and data["count"] >= 0,
+                "vote list: count is int >= 0",
+                f"got {data.get('count')!r}")
+
+
+def test_vote_show(host):
+    """vote show 1 -- may fail if no topics exist."""
+    data, raw, rc = run_cli("vote show 1", host=host)
+
+    if rc != 0:
+        # No topics or index out of range -- acceptable.
+        runner.skip("vote show 1", "exit code != 0 (likely no topics)")
+        return
+
+    assert_true(data is not None, "vote show 1: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    # If we got valid JSON, verify expected structure.
+    assert_true("topic" in data or "question" in data,
+                "vote show 1: has 'topic' or 'question' key",
+                f"keys: {list(data.keys())}")
+
+
+def test_vote_results(host):
+    """vote results 1 -- may fail if no topics exist."""
+    data, raw, rc = run_cli("vote results 1", host=host)
+
+    if rc != 0:
+        # No topics or index out of range -- acceptable.
+        runner.skip("vote results 1", "exit code != 0 (likely no topics)")
+        return
+
+    assert_true(data is not None, "vote results 1: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    # If we got valid JSON, verify expected structure.
+    assert_true("topic" in data or "question" in data or "results" in data,
+                "vote results 1: has expected keys",
+                f"keys: {list(data.keys())}")
+
+
+def test_mail_alias_list(host):
+    """mail alias list for known user."""
+    print(flush=True)
+    print("=== Mail Alias Commands ===", flush=True)
+
+    data, raw, rc = run_cli("mail alias list Samoht", host=host)
+
+    assert_true(rc == 0, "mail alias list: exit code 0", f"got {rc}")
+    assert_true(data is not None, "mail alias list: valid JSON",
+                f"raw output: {raw[:200]!r}" if data is None else "")
+
+    if data is None:
+        return
+
+    assert_true("aliases" in data, "mail alias list: has 'aliases' key")
+    aliases = data.get("aliases")
+    assert_true(isinstance(aliases, list),
+                "mail alias list: aliases is array",
+                f"got {type(aliases).__name__}")
+    assert_true("count" in data, "mail alias list: has 'count' key")
+    assert_true(isinstance(data.get("count"), int),
+                "mail alias list: count is int",
+                f"got {type(data.get('count')).__name__}")
+    assert_true("account" in data, "mail alias list: has 'account' key")
+    assert_true("uucp_name" in data, "mail alias list: has 'uucp_name' key")
+
+
+def test_mail_alias_mutations(host):
+    """mail alias add/remove cycle with read-back verification."""
+    print(flush=True)
+    print("--- Mail alias mutations ---", flush=True)
+
+    test_alias = "clitest"
+
+    # --- Add alias ---
+    add_args = (
+        f'mail alias add Samoht '
+        f'--alias {test_alias} '
+        f'--name "Test Alias"'
+    )
+    data, raw, rc = run_cli(add_args, host=host)
+
+    assert_true(rc == 0, "mail alias add: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    assert_true(data is not None, "mail alias add: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+
+    if data is not None:
+        assert_eq(data.get("status"), "added",
+                  "mail alias add: status == added")
+
+    # --- Read back: verify alias is in the list ---
+    data, raw, rc = run_cli("mail alias list Samoht", host=host)
+    assert_true(rc == 0, "mail alias list after add: exit code 0",
+                f"got {rc}")
+
+    alias_found = False
+    if data is not None:
+        aliases = data.get("aliases", [])
+        for a in aliases:
+            name = a if isinstance(a, str) else a.get("alias", "")
+            if name == test_alias or (isinstance(a, dict)
+                                      and a.get("alias") == test_alias):
+                alias_found = True
+                break
+    assert_true(alias_found,
+                "mail alias list after add: clitest alias present",
+                f"aliases: {data.get('aliases', [])!r}"
+                if data else "no data")
+
+    # --- Remove alias ---
+    remove_args = (
+        f'mail alias remove Samoht '
+        f'--alias {test_alias}'
+    )
+    data, raw, rc = run_cli(remove_args, host=host)
+
+    assert_true(rc == 0, "mail alias remove: exit code 0",
+                f"got {rc}, raw: {raw[:200]!r}")
+    assert_true(data is not None, "mail alias remove: valid JSON",
+                f"raw: {raw[:200]!r}" if data is None else "")
+
+    if data is not None:
+        assert_eq(data.get("status"), "removed",
+                  "mail alias remove: status == removed")
+        assert_eq(data.get("removed_count"), 1,
+                  "mail alias remove: removed_count == 1")
+
+    # --- Read back: verify alias is gone ---
+    data, raw, rc = run_cli("mail alias list Samoht", host=host)
+    assert_true(rc == 0, "mail alias list after remove: exit code 0",
+                f"got {rc}")
+
+    alias_still_present = False
+    if data is not None:
+        aliases = data.get("aliases", [])
+        for a in aliases:
+            name = a if isinstance(a, str) else a.get("alias", "")
+            if name == test_alias or (isinstance(a, dict)
+                                      and a.get("alias") == test_alias):
+                alias_still_present = True
+                break
+    assert_true(not alias_still_present,
+                "mail alias list after remove: clitest alias gone",
+                f"aliases: {data.get('aliases', [])!r}"
+                if data else "no data")
 
 
 # ---------------------------------------------------------------------------
@@ -1782,7 +3632,7 @@ def main():
     test_ports(host)
     test_who(host)
 
-    # Phase 1: cnet4.library availability.
+    # cnet4.library integration.
     test_cnet4_library(host)
 
     # Subboard reads.
@@ -1811,14 +3661,14 @@ def main():
     else:
         test_msg_operations(host)
 
-    # Phase 1: OLM timestamp test (requires user online, may skip).
+    # OLM timestamp test (requires user online, may skip).
     if skip_mutations:
         runner.skip("OLM timestamp test",
                     "skipped via --skip-mutations")
     else:
         test_olm_timestamp(host)
 
-    # Phase 2: Trivial read additions.
+    # Extended read operations.
     test_sub_show_subop_fields(host)
     test_sub_show_activity_dates(host)
     test_user_plan(host)
@@ -1828,12 +3678,111 @@ def main():
     test_conf_list(host)
     test_conf_list_all(host)
 
-    # Phase 3: Group edit and transpose.
+    # Group edit and transpose.
     if skip_mutations:
         runner.skip("Group edit/transpose",
                     "skipped via --skip-mutations")
     else:
         test_group_edit_transpose(host)
+
+    # Config and control enhancements.
+    print(flush=True)
+    print("=== Config/Control Enhancements ===", flush=True)
+
+    test_config_show_extended(host)
+    test_config_flags_read(host)
+    test_config_port_loaded(host)
+    test_config_port_unloaded(host)
+    test_config_port_invalid(host)
+    test_config_flags_invalid(host)
+
+    if skip_mutations:
+        runner.skip("Config flags write/readback",
+                    "skipped via --skip-mutations")
+        runner.skip("Config reload-text",
+                    "skipped via --skip-mutations")
+    else:
+        test_config_flags_write(host)
+        test_config_reload_text(host)
+
+    # Subboard edit extensions (access restrictions + boolean flags).
+    test_sub_show_new_fields(host)
+
+    if skip_mutations:
+        runner.skip("Sub edit access restrictions",
+                    "skipped via --skip-mutations")
+        runner.skip("Sub edit boolean flags",
+                    "skipped via --skip-mutations")
+        runner.skip("Sub edit obits flags",
+                    "skipped via --skip-mutations")
+    else:
+        test_sub_edit_access_restrictions(host)
+        test_sub_edit_boolean_flags(host)
+        test_sub_edit_obits_flags(host)
+
+    # Utility integrations.
+    test_sub_show_access_groups(host)
+    test_sub_list_no_access_groups(host)
+    test_group_show_access_groups(host)
+    test_group_list_no_access_groups(host)
+    test_user_show_address_type(host)
+    test_sub_disk_usage(host)
+    test_sub_disk_usage_invalid(host)
+
+    if skip_mutations:
+        runner.skip("Sub edit access groups mutation",
+                    "skipped via --skip-mutations")
+        runner.skip("File validate range",
+                    "skipped via --skip-mutations")
+    else:
+        test_sub_edit_access_groups_mutation(host)
+        test_file_validate_range(host)
+
+    # Event commands.
+    print(flush=True)
+    print("=== Event Commands ===", flush=True)
+
+    test_event_list_empty(host)
+    test_event_list_all_empty(host)
+    test_event_show_no_events(host)
+    test_event_show_negative_index(host)
+
+    # File and log enhancements.
+    print(flush=True)
+    print("=== File + Log Enhancements ===", flush=True)
+
+    test_file_missing_all(host)
+    test_file_missing_specific_sub(host)
+    test_file_missing_invalid_sub(host)
+    test_file_missing_msg_sub(host)
+    test_log_callers_parsed(host)
+    test_log_callers_parsed_tail(host)
+    test_log_callers_parsed_record_structure(host)
+    test_log_callers_parsed_tail_1(host)
+
+    # Maintenance operations.
+    test_maint_pointers(host)
+    test_maint_count_dry_run(host)
+    test_maint_count_single_sub(host)
+    test_maint_repair_mail_dry_run(host)
+    test_maint_repair_mail_single_user(host)
+    test_maint_repair_sub_unavailable(host)
+
+    # BBSList, vote, and mail alias.
+    test_bbslist_list(host)
+    test_bbslist_list_all(host)
+
+    test_vote_list(host)
+    test_vote_show(host)
+    test_vote_results(host)
+
+    test_mail_alias_list(host)
+
+    if skip_mutations:
+        runner.skip("Mail alias add/remove",
+                    "skipped via --skip-mutations")
+    else:
+        test_mail_alias_mutations(host)
 
     # Final summary.
     rc = runner.summary()

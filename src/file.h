@@ -31,4 +31,7 @@ int cmd_file_validate(struct MainPort *myp, int argc, char **argv);
 /* Search operations */
 int cmd_file_find(struct MainPort *myp, int argc, char **argv);
 
+/* Maintenance operations */
+int cmd_file_missing(struct MainPort *myp, int argc, char **argv);
+
 #endif /* CNET_CLI_FILE_H */

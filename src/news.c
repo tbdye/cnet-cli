@@ -41,25 +41,7 @@ extern struct Library *CNetBase;
 /* Magic value for HeaderType records in _text. */
 #define HEADERTYPE_MAGIC 0xBB25B8C4UL
 
-/* ---- Helpers copied from message.c (static, not shared) ---- */
-
-/*
- * Build a path to a file under a subboard's data/ directory.
- * Handles AmigaOS path joining: volume: needs no separator,
- * directory/ needs no extra separator.
- */
-static void build_data_file_path(char *buf, int bufsz,
-    const char *data_path, const char *filename)
-{
-    int len = (int)strlen(data_path);
-
-    if (len > 0 && (data_path[len - 1] == ':' ||
-                     data_path[len - 1] == '/')) {
-        snprintf(buf, bufsz, "%sdata/%s", data_path, filename);
-    } else {
-        snprintf(buf, bufsz, "%s/data/%s", data_path, filename);
-    }
-}
+/* build_data_file_path() moved to util.c for shared use */
 
 /*
  * Build a path to an item text file in the subboard's DataPath directory.

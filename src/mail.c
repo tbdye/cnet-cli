@@ -283,8 +283,8 @@ static int write_mail_direct(struct MainPort *myp,
     now = get_unix_time();
     memset(&hdr, 0, sizeof(hdr));
 
-    /* +0: Record offset in _mhead4 */
-    write_be_ulong(hdr.unknown_0, (ULONG)mhead_file_size);
+    /* +0: Always zero (was erroneously set to mhead_file_size) */
+    write_be_ulong(hdr.unknown_0, 0);
 
     /* +4, +122: Send timestamps */
     write_be_ulong(hdr.send_date, now);
@@ -1493,7 +1493,7 @@ int cmd_mail_delete(struct MainPort *myp, int argc, char **argv)
         char trash_mhead[300];
         ULONG new_seek = 0;
         int text_ok = 1;
-        long trash_tsize, trash_hsize;
+        long trash_tsize;
         BPTR fh_ttext, fh_thead;
         long nwritten;
 
@@ -1576,16 +1576,9 @@ int cmd_mail_delete(struct MainPort *myp, int argc, char **argv)
             if (hlock)
                 UnLock(hlock);
 
-            /* Update unknown_0 to reflect new position in TRASHCAN */
-            if (!hdr_exists) {
-                write_be_ulong(hdr.unknown_0, 0);
-                trash_hsize = 0;
-            } else {
-                trash_hsize = FileSize(trash_mhead);
-                if (trash_hsize < 0)
-                    trash_hsize = 0;
-                write_be_ulong(hdr.unknown_0, (ULONG)trash_hsize);
-            }
+            /* unknown_0 is always zero. Was erroneously set to
+             * trash_hsize (TRASHCAN _mhead4 file size). */
+            write_be_ulong(hdr.unknown_0, 0);
 
             /* ---- Append header to TRASHCAN _mhead4 ---- */
             if (!hdr_exists) {

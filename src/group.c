@@ -279,12 +279,27 @@ static void emit_group_detail(struct json_state *js,
     snprintf(hbuf, sizeof(hbuf), "0x%08lx",
         (unsigned long)p->MBaseFlags);
     json_kv_str(js, "mbase_flags", hbuf);
+    {
+        char fbuf[128];
+        json_kv_str(js, "mbase_flags_groups",
+            expand_flags_string(fbuf, sizeof(fbuf), p->MBaseFlags));
+    }
     snprintf(hbuf, sizeof(hbuf), "0x%08lx",
         (unsigned long)p->FBaseFlags);
     json_kv_str(js, "fbase_flags", hbuf);
+    {
+        char fbuf[128];
+        json_kv_str(js, "fbase_flags_groups",
+            expand_flags_string(fbuf, sizeof(fbuf), p->FBaseFlags));
+    }
     snprintf(hbuf, sizeof(hbuf), "0x%08lx",
         (unsigned long)p->LBaseFlags);
     json_kv_str(js, "lbase_flags", hbuf);
+    {
+        char fbuf[128];
+        json_kv_str(js, "lbase_flags_groups",
+            expand_flags_string(fbuf, sizeof(fbuf), p->LBaseFlags));
+    }
     snprintf(hbuf, sizeof(hbuf), "0x%08lx",
         (unsigned long)p->ABits);
     json_kv_str(js, "abits", hbuf);
@@ -666,24 +681,27 @@ int cmd_group_edit(struct MainPort *myp, int argc, char **argv)
         } else if (strcmp(argv[i], "--mbase-flags") == 0 &&
                    i + 1 < argc) {
             i++;
-            if (!parse_hex_ulong(argv[i], &val_mbase_flags)) {
-                json_error("Invalid --mbase-flags hex value");
+            if (!convert_access_string(argv[i], &val_mbase_flags)) {
+                json_error("Invalid --mbase-flags value "
+                    "(hex or group string like '1-3,5')");
                 return 1;
             }
             have_mbase_flags = 1;
         } else if (strcmp(argv[i], "--fbase-flags") == 0 &&
                    i + 1 < argc) {
             i++;
-            if (!parse_hex_ulong(argv[i], &val_fbase_flags)) {
-                json_error("Invalid --fbase-flags hex value");
+            if (!convert_access_string(argv[i], &val_fbase_flags)) {
+                json_error("Invalid --fbase-flags value "
+                    "(hex or group string like '1-3,5')");
                 return 1;
             }
             have_fbase_flags = 1;
         } else if (strcmp(argv[i], "--lbase-flags") == 0 &&
                    i + 1 < argc) {
             i++;
-            if (!parse_hex_ulong(argv[i], &val_lbase_flags)) {
-                json_error("Invalid --lbase-flags hex value");
+            if (!convert_access_string(argv[i], &val_lbase_flags)) {
+                json_error("Invalid --lbase-flags value "
+                    "(hex or group string like '1-3,5')");
                 return 1;
             }
             have_lbase_flags = 1;

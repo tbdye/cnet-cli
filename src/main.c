@@ -25,6 +25,7 @@
  * 2-byte alignment matches SAS/C. No #define packed workaround needed.
  */
 #include <cnet/cnet.h>
+#include <cnet/eventdefs.h>
 
 /*
  * cnet.h redefines __asm to nothing for SAS/C compatibility.
@@ -62,6 +63,12 @@ _Static_assert(sizeof(struct RoomConfig) == 628,
     "RoomConfig size mismatch -- check packing");
 _Static_assert(sizeof(struct Room) == 16662,
     "Room size mismatch -- check packing");
+_Static_assert(sizeof(struct PortConfig) == 24,
+    "PortConfig must be 24 bytes");
+_Static_assert(sizeof(struct SerPort4) == 492,
+    "SerPort4 size mismatch with on-disk format");
+_Static_assert(sizeof(struct JobType4) == 186,
+    "JobType4 must be 186 bytes (SAS/C alignment)");
 
 #include <rexx/rxslib.h>
 
@@ -81,6 +88,11 @@ _Static_assert(sizeof(struct Room) == 16662,
 #include "arexx.h"
 #include "port.h"
 #include "conf.h"
+#include "events.h"
+#include "maint.h"
+#include "bbslist.h"
+#include "vote.h"
+#include "alias.h"
 
 /* Stack size for libnix -- 64KB is generous for our needs. */
 unsigned long __stack = 65536;
@@ -296,14 +308,15 @@ struct sub_command {
 };
 
 static const struct sub_command sub_commands[] = {
-    { "list",   cmd_sub_list   },
-    { "show",   cmd_sub_show   },
-    { "tree",   cmd_sub_tree   },
-    { "path",   cmd_sub_path   },
-    { "create", cmd_sub_create },
-    { "edit",   cmd_sub_edit   },
-    { "delete", cmd_sub_delete },
-    { NULL,     NULL           }
+    { "list",       cmd_sub_list       },
+    { "show",       cmd_sub_show       },
+    { "tree",       cmd_sub_tree       },
+    { "path",       cmd_sub_path       },
+    { "disk-usage", cmd_sub_disk_usage },
+    { "create",     cmd_sub_create     },
+    { "edit",       cmd_sub_edit       },
+    { "delete",     cmd_sub_delete     },
+    { NULL,         NULL               }
 };
 
 static int cmd_sub(void)
@@ -321,8 +334,9 @@ static int cmd_sub(void)
             "  show <id|gokey>\n"
             "  tree\n"
             "  path <id|gokey>\n"
+            "  disk-usage <id|gokey>\n"
             "  create --title <t> --go <key> --type <type> --parent <id|gokey>\n"
-            "         [--data-path <path>] [--access <hex>] [--max-items N]\n"
+            "         [--data-path <path>] [--access <hex|groups>] [--max-items N]\n"
             "  edit <id|gokey> [--title <t>] [--go <key>] [--type <type>] ...\n"
             "  delete <id|gokey> [--force]");
         return 1;
@@ -461,6 +475,63 @@ static int cmd_user(void)
     return 1;
 }
 
+/* ---------- command: mail alias (third-level dispatch) ---------- */
+
+struct alias_command {
+    const char *name;
+    int (*handler)(struct MainPort *, int, char **);
+};
+
+static const struct alias_command alias_commands[] = {
+    { "list",   cmd_mail_alias_list   },
+    { "add",    cmd_mail_alias_add    },
+    { "remove", cmd_mail_alias_remove },
+    { NULL,     NULL                  }
+};
+
+/*
+ * Third-level dispatch for mail alias commands.
+ * Called from cmd_mail with mail_argv[0]="alias".
+ * Shifts argv by 1 so alias sub-handlers get
+ * argv[0]="list"/"add"/"remove", argv[1..]=remaining args.
+ */
+static int cmd_mail_alias(struct MainPort *mp, int argc, char **argv)
+{
+    const struct alias_command *ac;
+    int alias_argc;
+    char **alias_argv;
+
+    if (argc < 2) {
+        json_error(
+            "Usage: cnet-cli mail alias <subcommand> [args]\n"
+            "\n"
+            "Subcommands:\n"
+            "  list <account|handle>\n"
+            "  add <account|handle> --alias <name>"
+            " --name <recipient> [--address <addr>]\n"
+            "  remove <account|handle> --alias <name>"
+            " [--name <recipient>]");
+        return 1;
+    }
+
+    /* alias_argv[0] = "list"/"add"/"remove", [1..] = remaining */
+    alias_argc = argc - 1;
+    alias_argv = argv + 1;
+
+    for (ac = alias_commands; ac->name; ac++) {
+        if (strcmp(alias_argv[0], ac->name) == 0)
+            return ac->handler(mp, alias_argc, alias_argv);
+    }
+
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "Unknown mail alias command: %s", alias_argv[0]);
+        json_error(buf);
+    }
+    return 1;
+}
+
 /* ---------- command: mail (mail dispatch) ---------- */
 
 struct mail_command {
@@ -478,6 +549,7 @@ static const struct mail_command mail_commands[] = {
     { "count",    cmd_mail_count    },
     { "feedback", cmd_mail_feedback },
     { "verify",   cmd_mail_verify   },
+    { "alias",    cmd_mail_alias    },
     { NULL,       NULL              }
 };
 
@@ -506,7 +578,12 @@ static int cmd_mail(void)
             "  feedback [<num>] [--folder <name>]"
             " [--limit N] [--offset N]\n"
             "  verify <account|handle>"
-            " [--limit N] [--offset N]");
+            " [--limit N] [--offset N]\n"
+            "  alias list <account|handle>\n"
+            "  alias add <account|handle> --alias <name>"
+            " --name <recipient> [--address <addr>]\n"
+            "  alias remove <account|handle> --alias <name>"
+            " [--name <recipient>]");
         return 1;
     }
 
@@ -541,6 +618,7 @@ static const struct file_command file_commands[] = {
     { "remove",   cmd_file_remove   },
     { "validate", cmd_file_validate },
     { "find",     cmd_file_find     },
+    { "missing",  cmd_file_missing  },
     { NULL,       NULL              }
 };
 
@@ -565,7 +643,8 @@ static int cmd_file(void)
             " [--delete-physical]\n"
             "  validate <sub-id|gokey> <range>\n"
             "  find <query> [--sub <id|gokey>] [--limit N]"
-            " [--field filename|description|uploader]");
+            " [--field filename|description|uploader]\n"
+            "  missing [<sub-id|gokey>] [--update]");
         return 1;
     }
 
@@ -739,15 +818,54 @@ static int cmd_group(void)
     return 1;
 }
 
-/* ---------- command: config ---------- */
+/* ---------- command: config (config dispatch) ---------- */
+
+struct config_command {
+    const char *name;
+    int (*handler)(struct MainPort *, int, char **);
+};
+
+static const struct config_command config_commands[] = {
+    { "show",        cmd_config_show        },
+    { "flags",       cmd_config_flags       },
+    { "reload-text", cmd_config_reload_text },
+    { "port",        cmd_config_port        },
+    { NULL,          NULL                   }
+};
 
 static int cmd_config(void)
 {
-    if (g_argc < 3 || strcmp(g_argv[2], "show") != 0) {
-        json_error("Usage: cnet-cli config show");
+    const struct config_command *cc;
+    int config_argc;
+    char **config_argv;
+
+    if (g_argc < 3) {
+        json_error(
+            "Usage: cnet-cli config <subcommand> [args]\n"
+            "\n"
+            "Subcommands:\n"
+            "  show                   BBS configuration\n"
+            "  flags [--set flag=val] Control panel flags\n"
+            "  reload-text            Reload BBSTEXT/BBSMENU\n"
+            "  port <port-number>     Per-port configuration");
         return 1;
     }
-    return cmd_config_show(myp, g_argc - 2, g_argv + 2);
+
+    config_argc = g_argc - 2;
+    config_argv = g_argv + 2;
+
+    for (cc = config_commands; cc->name; cc++) {
+        if (strcmp(config_argv[0], cc->name) == 0)
+            return cc->handler(myp, config_argc, config_argv);
+    }
+
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "Unknown config command: %s", config_argv[0]);
+        json_error(buf);
+    }
+    return 1;
 }
 
 /* ---------- command: log (log dispatch) ---------- */
@@ -758,10 +876,11 @@ struct log_command {
 };
 
 static const struct log_command log_commands[] = {
-    { "list",    cmd_log_list    },
-    { "read",    cmd_log_read    },
-    { "callers", cmd_log_callers },
-    { NULL,      NULL            }
+    { "list",           cmd_log_list           },
+    { "read",           cmd_log_read           },
+    { "callers",        cmd_log_callers        },
+    { "callers-parsed", cmd_log_callers_parsed },
+    { NULL,             NULL                   }
 };
 
 static int cmd_log(void)
@@ -779,7 +898,9 @@ static int cmd_log(void)
             "  read <name> [--tail N] [--lines N]\n"
             "                    Read log file contents\n"
             "  callers [--tail N]\n"
-            "                    Read callers log");
+            "                    Read callers log\n"
+            "  callers-parsed [--tail N]\n"
+            "                    Structured calls log parser");
         return 1;
     }
 
@@ -961,6 +1082,197 @@ static int cmd_conf(void)
     return 1;
 }
 
+/* ---------- command: event (event dispatch) ---------- */
+
+struct event_command {
+    const char *name;
+    int (*handler)(struct MainPort *, int, char **);
+};
+
+static const struct event_command event_commands[] = {
+    { "list", cmd_event_list },
+    { "show", cmd_event_show },
+    { NULL,   NULL           }
+};
+
+static int cmd_event(void)
+{
+    const struct event_command *ec;
+    int event_argc;
+    char **event_argv;
+
+    if (g_argc < 3) {
+        json_error(
+            "Usage: cnet-cli event <subcommand> [args]\n"
+            "\n"
+            "Subcommands:\n"
+            "  list [--all]          List scheduled events\n"
+            "  show <index>          Show event detail");
+        return 1;
+    }
+
+    event_argc = g_argc - 2;
+    event_argv = g_argv + 2;
+
+    for (ec = event_commands; ec->name; ec++) {
+        if (strcmp(event_argv[0], ec->name) == 0)
+            return ec->handler(myp, event_argc, event_argv);
+    }
+
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "Unknown event command: %s", event_argv[0]);
+        json_error(buf);
+    }
+    return 1;
+}
+
+/* ---------- command: maint (maintenance dispatch) ---------- */
+
+struct maint_command {
+    const char *name;
+    int (*handler)(struct MainPort *, int, char **);
+};
+
+static const struct maint_command maint_commands[] = {
+    { "pointers",    cmd_maint_pointers    },
+    { "count",       cmd_maint_count       },
+    { "repair-mail", cmd_maint_repair_mail },
+    { "repair-sub",  cmd_maint_repair_sub  },
+    { NULL,          NULL                  }
+};
+
+static int cmd_maint(void)
+{
+    const struct maint_command *mc;
+    int maint_argc;
+    char **maint_argv;
+
+    if (g_argc < 3) {
+        json_error(
+            "Usage: cnet-cli maint <subcommand> [args]\n"
+            "\n"
+            "Subcommands:\n"
+            "  pointers               Rebuild user index files\n"
+            "  count [--apply] [--sub <id|gokey>] [--subs-only] [--nums-only]\n"
+            "                         Recount subboard/system counters\n"
+            "  repair-mail [<acct|handle>] [--folder <name>] --apply\n"
+            "                         Compact mail data files\n"
+            "  repair-sub <id|gokey> --apply\n"
+            "                         Compact subboard text pool");
+        return 1;
+    }
+
+    maint_argc = g_argc - 2;
+    maint_argv = g_argv + 2;
+
+    for (mc = maint_commands; mc->name; mc++) {
+        if (strcmp(maint_argv[0], mc->name) == 0)
+            return mc->handler(myp, maint_argc, maint_argv);
+    }
+
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "Unknown maint command: %s", maint_argv[0]);
+        json_error(buf);
+    }
+    return 1;
+}
+
+/* ---------- command: bbslist (BBSList dispatch) ---------- */
+
+struct bbslist_command {
+    const char *name;
+    int (*handler)(struct MainPort *, int, char **);
+};
+
+static const struct bbslist_command bbslist_commands[] = {
+    { "list", cmd_bbslist_list },
+    { NULL,   NULL             }
+};
+
+static int cmd_bbslist(void)
+{
+    const struct bbslist_command *bc;
+    int bbslist_argc;
+    char **bbslist_argv;
+
+    if (g_argc < 3) {
+        json_error(
+            "Usage: cnet-cli bbslist <subcommand> [args]\n"
+            "\n"
+            "Subcommands:\n"
+            "  list [--all]          List BBS entries");
+        return 1;
+    }
+
+    bbslist_argc = g_argc - 2;
+    bbslist_argv = g_argv + 2;
+
+    for (bc = bbslist_commands; bc->name; bc++) {
+        if (strcmp(bbslist_argv[0], bc->name) == 0)
+            return bc->handler(myp, bbslist_argc, bbslist_argv);
+    }
+
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "Unknown bbslist command: %s", bbslist_argv[0]);
+        json_error(buf);
+    }
+    return 1;
+}
+
+/* ---------- command: vote (voting booth dispatch) ---------- */
+
+struct vote_command {
+    const char *name;
+    int (*handler)(struct MainPort *, int, char **);
+};
+
+static const struct vote_command vote_commands[] = {
+    { "list",    cmd_vote_list    },
+    { "show",    cmd_vote_show    },
+    { "results", cmd_vote_results },
+    { NULL,      NULL             }
+};
+
+static int cmd_vote(void)
+{
+    const struct vote_command *vc;
+    int vote_argc;
+    char **vote_argv;
+
+    if (g_argc < 3) {
+        json_error(
+            "Usage: cnet-cli vote <subcommand> [args]\n"
+            "\n"
+            "Subcommands:\n"
+            "  list                  List vote topics\n"
+            "  show <number>         Show topic detail with choices/results\n"
+            "  results <number>      Show vote results only");
+        return 1;
+    }
+
+    vote_argc = g_argc - 2;
+    vote_argv = g_argv + 2;
+
+    for (vc = vote_commands; vc->name; vc++) {
+        if (strcmp(vote_argv[0], vc->name) == 0)
+            return vc->handler(myp, vote_argc, vote_argv);
+    }
+
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "Unknown vote command: %s", vote_argv[0]);
+        json_error(buf);
+    }
+    return 1;
+}
+
 /* ---------- command dispatch ---------- */
 
 struct command {
@@ -987,7 +1299,11 @@ static const struct command commands[] = {
     { "arexx",  cmd_arexx  },
     { "port",   cmd_port   },
     { "conf",   cmd_conf   },
-    { NULL,     NULL       }
+    { "event",   cmd_event   },
+    { "maint",   cmd_maint   },
+    { "bbslist", cmd_bbslist },
+    { "vote",    cmd_vote    },
+    { NULL,      NULL        }
 };
 
 static void print_usage(void)
@@ -1031,6 +1347,8 @@ static void print_usage(void)
         "  file find <query> [--sub <id>] [--limit N]\n"
         "    [--field filename|description|uploader]\n"
         "                        Search files across subboards\n"
+        "  file missing [<sub>] [--update]\n"
+        "                        Detect missing/restored files\n"
         "  news list <sub> [--limit N] [--offset N]\n"
         "                        List items in a text/door area\n"
         "  news read <sub> <num> Read news item with text\n"
@@ -1081,15 +1399,29 @@ static void print_usage(void)
         "                        Sysop feedback mail\n"
         "  mail verify <acct|handle>\n"
         "                        View sent mail\n"
+        "  mail alias list <acct|handle>\n"
+        "                        List mail aliases\n"
+        "  mail alias add <acct|handle> --alias <name>\n"
+        "    --name <recipient> [--address <addr>]\n"
+        "                        Add a mail alias\n"
+        "  mail alias remove <acct|handle> --alias <name>\n"
+        "    [--name <recipient>]\n"
+        "                        Remove a mail alias\n"
         "  group list            List access groups\n"
         "  group show <id>       Access group detail\n"
         "  config show           BBS configuration\n"
+        "  config flags [--set flag=val ...]\n"
+        "                        Control panel flags\n"
+        "  config reload-text    Reload BBSTEXT/BBSMENU\n"
+        "  config port <N>       Per-port configuration\n"
         "  stats                 System statistics\n"
         "  log list              List log files\n"
         "  log read <name> [--tail N] [--lines N]\n"
         "                        Read log file contents\n"
         "  log callers [--tail N]\n"
         "                        Read callers log\n"
+        "  log callers-parsed [--tail N]\n"
+        "                        Structured calls log parser\n"
         "  arexx send <port> <cmd...>\n"
         "                        Send ARexx command to CNETREXX{N}\n"
         "  arexx control <cmd...>\n"
@@ -1097,7 +1429,20 @@ static void print_usage(void)
         "  port load <port>      Load a BBS port\n"
         "  port unload <port>    Unload a BBS port\n"
         "  port dump <port>      Disconnect user on a port\n"
-        "  conf list [--all]     List conference rooms");
+        "  conf list [--all]     List conference rooms\n"
+        "  event list [--all]    List scheduled events\n"
+        "  event show <index>    Show event detail\n"
+        "  maint pointers        Rebuild user index files\n"
+        "  maint count [--apply] [--sub <id>] [--subs-only] [--nums-only]\n"
+        "                         Recount subboard/system counters\n"
+        "  maint repair-mail [<acct>] [--folder <name>] --apply\n"
+        "                         Compact mail data files\n"
+        "  maint repair-sub <id|gokey> --apply\n"
+        "                         Compact subboard text pool\n"
+        "  bbslist list [--all]  List BBS directory entries\n"
+        "  vote list             List vote topics\n"
+        "  vote show <number>    Vote topic detail with choices/results\n"
+        "  vote results <number> Vote results only");
 }
 
 /* ---------- init / cleanup ---------- */

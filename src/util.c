@@ -28,6 +28,7 @@
 #undef __asm
 
 #include <proto/exec.h>
+#include <proto/cnet4.h>
 
 /*
  * CNetBase is declared extern in proto/cnet.h. We reference it here
@@ -35,6 +36,27 @@
  * in main.c.
  */
 extern struct Library *CNetBase;
+
+/* From main.c -- may be NULL if cnet4.library is not available */
+extern struct Library *CNet4Base;
+
+/*
+ * Build a path to a file under a subboard's data/ directory.
+ * Handles AmigaOS path joining: volume: needs no separator,
+ * directory/ needs no extra separator.
+ */
+void build_data_file_path(char *buf, int bufsz,
+    const char *data_path, const char *filename)
+{
+    int len = (int)strlen(data_path);
+
+    if (len > 0 && (data_path[len - 1] == ':' ||
+                     data_path[len - 1] == '/')) {
+        snprintf(buf, bufsz, "%sdata/%s", data_path, filename);
+    } else {
+        snprintf(buf, bufsz, "%s/data/%s", data_path, filename);
+    }
+}
 
 char *strip_mci(char *buf, int bufsz, const char *src)
 {
@@ -286,4 +308,196 @@ void warn_emit(struct json_state *js)
 int warn_count(void)
 {
     return g_warn_count;
+}
+
+const char *warn_get(int index)
+{
+    if (index < 0 || index >= g_warn_count)
+        return NULL;
+    return g_warnings[index];
+}
+
+/* ---- Access string conversion ---- */
+
+char *expand_flags_string(char *buf, int bufsz, long flags)
+{
+    /* ExpandFlags has no size parameter -- it requires at least 128 bytes.
+     * Fall back to hex if the buffer is too small. */
+    if (CNetBase && bufsz >= 128) {
+        ExpandFlags(flags, buf);
+    } else {
+        snprintf(buf, bufsz, "0x%08lx", (unsigned long)flags);
+    }
+    return buf;
+}
+
+int convert_access_string(const char *s, unsigned long *out)
+{
+    if (!s || !*s)
+        return 0;
+
+    /* Only attempt hex parse if the string has a 0x/0X prefix.
+     * This avoids ambiguity: "10" means group 10, not hex 0x10. */
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        char *endp;
+        unsigned long val = strtoul(s, &endp, 16);
+        if (*endp == '\0') {
+            *out = val;
+            return 1;
+        }
+        return 0;
+    }
+
+    /* Try ConvertAccess() from cnet.library for group strings
+     * like "1-3,5,7-10". */
+    if (CNetBase) {
+        *out = (unsigned long)ConvertAccess((char *)s);
+        return 1;
+    }
+
+    return 0;
+}
+
+/* ---- UUCP name resolution ---- */
+
+char *handle_to_uucp(char *buf, int bufsz, const char *handle)
+{
+    char *result;
+
+    if (!CNetBase)
+        return NULL;
+
+    result = HNameToUUCP((char *)handle);
+    if (!result)
+        return NULL;
+
+    /* Copy immediately -- library uses internal storage. */
+    strncpy(buf, result, bufsz - 1);
+    buf[bufsz - 1] = '\0';
+    return buf;
+}
+
+char *id_to_uucp(char *buf, int bufsz, long userid)
+{
+    char *result;
+
+    if (!CNetBase)
+        return NULL;
+
+    result = CNetIDToUUCP(userid);
+    if (!result)
+        return NULL;
+
+    /* Copy immediately -- library uses internal storage. */
+    strncpy(buf, result, bufsz - 1);
+    buf[bufsz - 1] = '\0';
+    return buf;
+}
+
+int address_type(const char *addr)
+{
+    if (!CNetBase)
+        return 0;
+
+    return (int)CNetAddressType((char *)addr);
+}
+
+/* ---- CNet range functions ---- */
+
+/*
+ * Range iteration wraps CNet4 library functions when available,
+ * with a simple N or N-M fallback when CNet4Base is NULL.
+ *
+ * Iteration pattern verified against CNet4 API:
+ *   first = parse_range_init(str, min, max, &rctx);
+ *   while (1) {
+ *       // process first/val
+ *       if (parse_range_done(&rctx)) break;
+ *       val = parse_range_next(&rctx);
+ *   }
+ */
+
+long parse_range_init(const char *range_str, long min, long max,
+    struct RangeContext *rctx)
+{
+    if (CNet4Base) {
+        long first = CNetFindRange((char *)range_str, min, max, rctx);
+        if (first < min || first > max)
+            return -1;
+        return first;
+    }
+
+    /* Fallback: simple N or N-M parser (no comma support). */
+    {
+        const char *dash;
+        long start, end;
+
+        memset(rctx, 0, sizeof(*rctx));
+
+        dash = strchr(range_str, '-');
+        if (dash && dash != range_str && dash[1] != '\0') {
+            char left_buf[16];
+            int left_len = (int)(dash - range_str);
+            if (left_len >= (int)sizeof(left_buf))
+                left_len = (int)sizeof(left_buf) - 1;
+            strncpy(left_buf, range_str, (unsigned)left_len);
+            left_buf[left_len] = '\0';
+
+            if (!all_digits(left_buf) || !all_digits(dash + 1))
+                return -1;
+
+            start = atol(left_buf);
+            end = atol(dash + 1);
+        } else {
+            if (!all_digits(range_str))
+                return -1;
+            start = atol(range_str);
+            end = start;
+        }
+
+        /* Clamp to [min, max] */
+        if (start < min) start = min;
+        if (end > max) end = max;
+        if (start > end)
+            return -1;
+
+        rctx->nparts = 1;
+        rctx->parts[0][0] = start;
+        rctx->parts[0][1] = end;
+        rctx->set = 0;
+        rctx->element = start;
+
+        return start;
+    }
+}
+
+long parse_range_next(struct RangeContext *rctx)
+{
+    if (CNet4Base)
+        return CNetNextRange(rctx);
+
+    /* Fallback iteration */
+    rctx->element++;
+    if (rctx->element > rctx->parts[rctx->set][1]) {
+        rctx->set++;
+        if (rctx->set >= rctx->nparts)
+            return -1;
+        rctx->element = rctx->parts[rctx->set][0];
+    }
+    return rctx->element;
+}
+
+int parse_range_done(struct RangeContext *rctx)
+{
+    if (CNet4Base)
+        return CNetEndOfRange(rctx) != 0;
+
+    /* Fallback: done when current element is past the end of the
+     * current set AND no more sets remain. */
+    if (rctx->set >= rctx->nparts)
+        return 1;
+    if (rctx->set == rctx->nparts - 1 &&
+        rctx->element >= rctx->parts[rctx->set][1])
+        return 1;
+    return 0;
 }

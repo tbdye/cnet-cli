@@ -110,6 +110,18 @@ static void emit_user_detail(struct json_state *js,
         strip_mci(buf, sizeof(buf), user->RealName));
     json_kv_str(js, "uucp", user->UUCP);
 
+    /* Address type classification */
+    {
+        int atype = address_type(user->UUCP);
+        const char *atype_name;
+        switch (atype) {
+        case 1:  atype_name = "local"; break;
+        case 2:  atype_name = "internet"; break;
+        default: atype_name = "unknown"; break;
+        }
+        json_kv_str(js, "address_type", atype_name);
+    }
+
     /* Contact/personal fields */
     json_kv_str(js, "address", user->Address);
     json_kv_str(js, "city_state", user->CityState);
@@ -1326,7 +1338,7 @@ static int iphone_compare(const void *a, const void *b)
  * Returns the number of entries written into myp->IName[],
  * or -1 on allocation failure.
  */
-static int rebuild_iname_index(struct MainPort *myp)
+int rebuild_iname_index(struct MainPort *myp)
 {
     long num_accounts = myp->Nums[NUMS_CURRENT_ACCOUNTS];
     int max_entries = (int)num_accounts * 2;
@@ -1361,7 +1373,7 @@ static int rebuild_iname_index(struct MainPort *myp)
  * Returns the number of entries written into myp->IPhone[],
  * or -1 on allocation failure.
  */
-static int rebuild_iphone_index(struct MainPort *myp)
+int rebuild_iphone_index(struct MainPort *myp)
 {
     long num_accounts = myp->Nums[NUMS_CURRENT_ACCOUNTS];
     short *temp;
@@ -1400,7 +1412,7 @@ static int rebuild_iphone_index(struct MainPort *myp)
  *   bit 2 = bbs.uind2
  *   bit 3 = bbs.sdata
  */
-static int write_user_index_files(struct MainPort *myp,
+int write_user_index_files(struct MainPort *myp,
     int iname_count, int iphone_count)
 {
     long num_accounts = myp->Nums[NUMS_CURRENT_ACCOUNTS];

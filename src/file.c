@@ -26,6 +26,7 @@
 
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <proto/cnet4.h>
 
 #include "file.h"
 #include "json.h"
@@ -33,6 +34,9 @@
 
 /* From main.c */
 extern struct Library *CNetBase;
+
+/* From main.c -- may be NULL if cnet4.library is not available */
+extern struct Library *CNet4Base;
 
 /*
  * Maximum text buffer for reading message/description text from _text.
@@ -50,25 +54,7 @@ extern struct Library *CNetBase;
  */
 #define SHORT_DESC_FILE "_Short"
 
-/* ---- Helpers copied from message.c (static, not shared) ---- */
-
-/*
- * Build a path to a file under a subboard's data/ directory.
- * Handles AmigaOS path joining: volume: needs no separator,
- * directory/ needs no extra separator.
- */
-static void build_data_file_path(char *buf, int bufsz,
-    const char *data_path, const char *filename)
-{
-    int len = (int)strlen(data_path);
-
-    if (len > 0 && (data_path[len - 1] == ':' ||
-                     data_path[len - 1] == '/')) {
-        snprintf(buf, bufsz, "%sdata/%s", data_path, filename);
-    } else {
-        snprintf(buf, bufsz, "%s/data/%s", data_path, filename);
-    }
-}
+/* build_data_file_path() moved to util.c for shared use */
 
 /*
  * Build the path to the _text file for a subboard.
@@ -1524,7 +1510,7 @@ int cmd_file_validate(struct MainPort *myp, int argc, char **argv)
 
     if (argc < 3) {
         json_error("Usage: cnet-cli file validate <sub-id|gokey> "
-            "<item-range> (number, N-M, or 'all')");
+            "<item-range> (number, N-M, comma-separated, or 'all')");
         return 1;
     }
 
@@ -1561,76 +1547,77 @@ int cmd_file_validate(struct MainPort *myp, int argc, char **argv)
 
     count = (long)sub->rn;
 
-    /* Parse item range. */
-    if (strcasecmp(range_str, "all") == 0) {
-        start = 1;
-        end = count;
-    } else {
-        const char *dash = strchr(range_str, '-');
-        if (dash && dash != range_str && dash[1] != '\0') {
-            /* Range: N-M */
-            char left_buf[16];
-            int left_len = (int)(dash - range_str);
-            if (left_len >= (int)sizeof(left_buf))
-                left_len = (int)sizeof(left_buf) - 1;
-            strncpy(left_buf, range_str, (unsigned)left_len);
-            left_buf[left_len] = '\0';
+    /* Parse item range using CNet range functions.
+     * "all" is handled as a fast path; everything else goes through
+     * parse_range_init/parse_range_next/parse_range_done. */
+    {
+        struct RangeContext rctx;
+        int use_range_ctx = 0;
+        long first = 0;
 
-            if (!all_digits(left_buf) || !all_digits(dash + 1)) {
-                json_error("Invalid range: expected number, "
-                    "range (N-M), or 'all'");
-                rc = 1;
-                goto cleanup;
-            }
-            start = atol(left_buf);
-            end = atol(dash + 1);
+        if (strcasecmp(range_str, "all") == 0) {
+            start = 1;
+            end = count;
         } else {
-            /* Single number */
-            if (!all_digits(range_str)) {
+            first = parse_range_init(range_str, 1, count, &rctx);
+            if (first < 0) {
                 json_error("Invalid range: expected number, "
-                    "range (N-M), or 'all'");
+                    "range (N-M), comma-separated, or 'all'");
                 rc = 1;
                 goto cleanup;
             }
-            start = atol(range_str);
-            end = start;
+            use_range_ctx = 1;
         }
-    }
 
-    /* Validate parsed range. */
-    if (start < 1 || end < start) {
-        json_error("Invalid item range");
-        rc = 1;
-        goto cleanup;
-    }
-    if (end > count) {
-        json_error("Item range exceeds subboard item count");
-        rc = 1;
-        goto cleanup;
-    }
+        /* Process items in range. */
+        if (use_range_ctx) {
+            long val = first;
+            while (1) {
+                struct ItemType3 vitem;
+                struct ItemHeader vihead;
 
-    /* Process items in range. */
-    for (i = start; i <= end; i++) {
-        struct ItemType3 vitem;
-        struct ItemHeader vihead;
+                memset(&vitem, 0, sizeof(vitem));
+                memset(&vihead, 0, sizeof(vihead));
+                ZGetItem(&vitem, &vihead, sub, (short)(val - 1));
 
-        memset(&vitem, 0, sizeof(vitem));
-        memset(&vihead, 0, sizeof(vihead));
-        ZGetItem(&vitem, &vihead, sub, (short)(i - 1));
+                total_in_range++;
 
-        total_in_range++;
+                if (!vihead.Killed && !vitem.Validated) {
+                    vitem.Validated = 1;
+                    ZPutItem(&vitem, &vihead, sub, (short)(val - 1));
+                    validated_count++;
+                }
 
-        /* Skip killed items. */
-        if (vihead.Killed)
-            continue;
+                if (parse_range_done(&rctx))
+                    break;
+                val = parse_range_next(&rctx);
+            }
+            /* For output: start/end reflect first and last processed */
+            start = first;
+            end = val;
+        } else {
+            /* "all" case -- simple sequential iteration */
+            for (i = start; i <= end; i++) {
+                struct ItemType3 vitem;
+                struct ItemHeader vihead;
 
-        /* Skip already validated items. */
-        if (vitem.Validated)
-            continue;
+                memset(&vitem, 0, sizeof(vitem));
+                memset(&vihead, 0, sizeof(vihead));
+                ZGetItem(&vitem, &vihead, sub, (short)(i - 1));
 
-        vitem.Validated = 1;
-        ZPutItem(&vitem, &vihead, sub, (short)(i - 1));
-        validated_count++;
+                total_in_range++;
+
+                if (vihead.Killed)
+                    continue;
+
+                if (vitem.Validated)
+                    continue;
+
+                vitem.Validated = 1;
+                ZPutItem(&vitem, &vihead, sub, (short)(i - 1));
+                validated_count++;
+            }
+        }
     }
 
     /* Output confirmation. */
@@ -1865,6 +1852,314 @@ int cmd_file_find(struct MainPort *myp, int argc, char **argv)
 
     json_kv_int(&js, "subboards_searched", (long)subs_searched);
     json_kv_int(&js, "total_matches", (long)total_matches);
+
+    json_obj_close(&js);
+    json_finish(&js);
+
+    return 0;
+}
+
+/* ---- file missing ---- */
+
+int cmd_file_missing(struct MainPort *myp, int argc, char **argv)
+{
+    struct json_state js;
+    char buf[128];
+    char pathbuf[256];
+    const char *sub_arg = NULL;
+    int update_mode = 0;
+    int total_scanned = 0;
+    int missing_count = 0;
+    int restored_count = 0;
+    int updated_count = 0;
+    int subs_scanned = 0;
+    int i;
+
+    /*
+     * Physnum list: collect target subboards first, then iterate.
+     * Same pattern as cmd_file_find().
+     */
+#define MISSING_MAX_SUBS 256
+    short physnums[MISSING_MAX_SUBS];
+    int nsubs = 0;
+    short skipped[MISSING_MAX_SUBS];
+    int nskipped = 0;
+
+    /* Parse arguments: optional subboard, optional --update. */
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--update") == 0) {
+            update_mode = 1;
+        } else if (!sub_arg) {
+            sub_arg = argv[i];
+        }
+    }
+
+    /* Build list of target subboards. */
+    if (sub_arg) {
+        short pn = resolve_subboard(myp, sub_arg);
+        if (pn < 0) {
+            json_error("Subboard not found");
+            return 1;
+        }
+
+        ObtainSemaphoreShared(&myp->SEM[5]);
+        if (pn < (short)myp->ns) {
+            struct SubboardType4 *s = &myp->Subboard[pn];
+            int mb = s->Marker & MRK_SUBBOARD_BASE;
+            if (mb != MRK_FILE_TXFER) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Subboard is not a file area");
+                return 1;
+            }
+        }
+        ReleaseSemaphore(&myp->SEM[5]);
+
+        physnums[0] = pn;
+        nsubs = 1;
+    } else {
+        ObtainSemaphoreShared(&myp->SEM[5]);
+        for (i = 0; i < (int)myp->ns &&
+                nsubs < MISSING_MAX_SUBS; i++) {
+            struct SubboardType4 *s = &myp->Subboard[i];
+            int mb = s->Marker & MRK_SUBBOARD_BASE;
+            if (s->Marker & MRK_SUBBOARD_KILLED)
+                continue;
+            if (mb != MRK_FILE_TXFER)
+                continue;
+            if (s->Subdirectory)
+                continue;
+            physnums[nsubs++] = (short)i;
+        }
+        ReleaseSemaphore(&myp->SEM[5]);
+    }
+
+    /* Begin JSON output. */
+    json_init(&js, stdout);
+    json_obj_open(&js);
+
+    json_key(&js, "missing");
+    json_arr_open(&js);
+
+    /*
+     * First pass: find missing files.
+     * We collect restored items in a second pass to keep the
+     * JSON arrays separate. Use a two-pass approach: first emit
+     * "missing", then re-scan for "restored".
+     *
+     * Actually, to avoid loading each subboard twice, we do a
+     * single pass per subboard and buffer restored items. But
+     * since the JSON emitter is streaming, we need the missing
+     * array closed before opening restored. So we do two passes.
+     *
+     * Optimization: the number of restored items is expected to
+     * be very small (0 in most scans), so the second pass is
+     * nearly free.
+     */
+
+    /* Pass 1: emit missing items. */
+    for (i = 0; i < nsubs; i++) {
+        struct SubboardType4 *s;
+        long si;
+        long sub_count;
+
+        s = &myp->Subboard[physnums[i]];
+
+        if (!OneMoreUser(s, (UBYTE)0)) {
+            if (nskipped < MISSING_MAX_SUBS)
+                skipped[nskipped++] = physnums[i];
+            continue;
+        }
+
+        subs_scanned++;
+        sub_count = (long)s->rn;
+
+        for (si = 0; si < sub_count; si++) {
+            struct ItemType3 *ip;
+            struct ItemHeader *ih;
+            const char *handle;
+            long file_exists;
+
+            ip = ZGetItemPtr(s, (short)si);
+            ih = ZGetIHeadPtr(s, (short)si);
+
+            if (!ip || !ih)
+                continue;
+            if (ih->Killed)
+                continue;
+            if (ih->Size == 0)
+                continue;
+            if (!ip->Finished)
+                continue;
+
+            total_scanned++;
+
+            build_file_path(pathbuf, sizeof(pathbuf),
+                s, ip->Title, ip->Part);
+            file_exists = verify_file_exists(pathbuf);
+
+            /* Skip items where verify returned error (-1). */
+            if (file_exists < 0)
+                continue;
+
+            if (file_exists == 0) {
+                /* File is missing from disk. */
+                missing_count++;
+                handle = lookup_handle(myp, ip->ByAccount);
+
+                json_obj_open(&js);
+                json_kv_str(&js, "subboard",
+                    strip_mci(buf, sizeof(buf),
+                        s->SubDirName));
+                json_kv_int(&js, "physnum",
+                    (long)physnums[i]);
+                json_kv_int(&js, "item_index", si + 1);
+                json_kv_int(&js, "item_number",
+                    (long)ih->Number);
+                json_kv_str(&js, "title",
+                    strip_mci(buf, sizeof(buf),
+                        ip->Title));
+                json_kv_int(&js, "size", ih->Size);
+                json_kv_int(&js, "partition",
+                    (long)ip->Part);
+                json_kv_str(&js, "expected_path", pathbuf);
+                json_kv_int(&js, "by_account",
+                    (long)ip->ByAccount);
+                json_kv_str(&js, "by_handle",
+                    strip_mci(buf, sizeof(buf), handle));
+                json_kv_bool(&js, "missing_file_flag",
+                    (int)ip->MissingFile);
+
+                if (update_mode) {
+                    if (!ip->MissingFile) {
+                        struct ItemType3 item_copy;
+                        struct ItemHeader ihead_copy;
+                        ZGetItem(&item_copy, &ihead_copy,
+                            s, (short)si);
+                        item_copy.MissingFile = 1;
+                        ZPutItem(&item_copy, &ihead_copy,
+                            s, (short)si);
+                        updated_count++;
+                        json_kv_bool(&js, "updated", 1);
+                    } else {
+                        json_kv_bool(&js, "updated", 0);
+                    }
+                }
+
+                json_obj_close(&js);
+            }
+        }
+
+        OneLessUser(s);
+    }
+
+    json_arr_close(&js);
+
+    /* Pass 2: find restored items (MissingFile=1 but file exists). */
+    json_key(&js, "restored");
+    json_arr_open(&js);
+
+    for (i = 0; i < nsubs; i++) {
+        struct SubboardType4 *s;
+        long si;
+        long sub_count;
+
+        s = &myp->Subboard[physnums[i]];
+
+        if (!OneMoreUser(s, (UBYTE)0))
+            continue;
+
+        sub_count = (long)s->rn;
+
+        for (si = 0; si < sub_count; si++) {
+            struct ItemType3 *ip;
+            struct ItemHeader *ih;
+            long file_exists;
+
+            ip = ZGetItemPtr(s, (short)si);
+            ih = ZGetIHeadPtr(s, (short)si);
+
+            if (!ip || !ih)
+                continue;
+            if (ih->Killed)
+                continue;
+            if (ih->Size == 0)
+                continue;
+            if (!ip->Finished)
+                continue;
+
+            /* Only interested in items flagged as missing. */
+            if (!ip->MissingFile)
+                continue;
+
+            build_file_path(pathbuf, sizeof(pathbuf),
+                s, ip->Title, ip->Part);
+            file_exists = verify_file_exists(pathbuf);
+
+            if (file_exists < 0)
+                continue;
+
+            if (file_exists > 0) {
+                /* File was marked missing but now exists. */
+                restored_count++;
+
+                json_obj_open(&js);
+                json_kv_str(&js, "subboard",
+                    strip_mci(buf, sizeof(buf),
+                        s->SubDirName));
+                json_kv_int(&js, "physnum",
+                    (long)physnums[i]);
+                json_kv_int(&js, "item_index", si + 1);
+                json_kv_int(&js, "item_number",
+                    (long)ih->Number);
+                json_kv_str(&js, "title",
+                    strip_mci(buf, sizeof(buf),
+                        ip->Title));
+                json_kv_int(&js, "size", ih->Size);
+                json_kv_int(&js, "partition",
+                    (long)ip->Part);
+                json_kv_str(&js, "expected_path", pathbuf);
+                json_kv_bool(&js, "missing_file_flag", 1);
+
+                if (update_mode) {
+                    struct ItemType3 item_copy;
+                    struct ItemHeader ihead_copy;
+                    ZGetItem(&item_copy, &ihead_copy,
+                        s, (short)si);
+                    item_copy.MissingFile = 0;
+                    ZPutItem(&item_copy, &ihead_copy,
+                        s, (short)si);
+                    updated_count++;
+                    json_kv_bool(&js, "updated", 1);
+                }
+
+                json_obj_close(&js);
+            }
+        }
+
+        OneLessUser(s);
+    }
+
+    json_arr_close(&js);
+
+    /* Summary. */
+    json_key(&js, "summary");
+    json_obj_open(&js);
+    json_kv_int(&js, "subboards_scanned", (long)subs_scanned);
+    json_kv_int(&js, "items_scanned", (long)total_scanned);
+    json_kv_int(&js, "missing_count", (long)missing_count);
+    json_kv_int(&js, "restored_count", (long)restored_count);
+    json_kv_int(&js, "updated_count", (long)updated_count);
+
+    json_key(&js, "skipped_subboards");
+    json_arr_open(&js);
+    {
+        int si;
+        for (si = 0; si < nskipped; si++)
+            json_int(&js, (long)skipped[si]);
+    }
+    json_arr_close(&js);
+
+    json_obj_close(&js);
 
     json_obj_close(&js);
     json_finish(&js);

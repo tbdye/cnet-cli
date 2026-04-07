@@ -53,6 +53,7 @@ void warn_clear(void);
 void warn_add(const char *msg);
 void warn_emit(struct json_state *js);
 int  warn_count(void);
+const char *warn_get(int index);
 
 /*
  * Return a human-readable name for a subboard marker base type.
@@ -115,5 +116,89 @@ int write_subboard_disk(int physnum, struct SubboardType4 *sub);
  * Returns the physical subboard number (>= 0) or -1 if not found.
  */
 short resolve_subboard(struct MainPort *myp, const char *id_or_gokey);
+
+/*
+ * Build a path to a file under a subboard's data/ directory.
+ * Handles AmigaOS path joining: volume: needs no separator,
+ * directory/ needs no extra separator.
+ *
+ * Result: "{data_path}data/{filename}" or "{data_path}/data/{filename}"
+ */
+void build_data_file_path(char *buf, int bufsz,
+    const char *data_path, const char *filename);
+
+/* ---- Access string conversion ---- */
+
+/*
+ * Convert an access bitmask to a human-readable string using ExpandFlags()
+ * from cnet.library. Output format: "1-3,5,7-10" (group numbers 0-31).
+ *
+ * Falls back to hex format "0xNNNNNNNN" if CNetBase is NULL.
+ * buf must be at least 128 bytes.
+ * Returns buf.
+ */
+char *expand_flags_string(char *buf, int bufsz, long flags);
+
+/*
+ * Parse an access string (either hex "0xNNNNNNNN" or human-readable
+ * "1-3,5,7-10") into a bitmask using ConvertAccess() from cnet.library.
+ *
+ * Tries hex parse first (only for 0x/0X prefix). Otherwise uses
+ * ConvertAccess() if CNetBase is available.
+ *
+ * Returns 1 on success (value in *out), 0 on failure.
+ */
+int convert_access_string(const char *s, unsigned long *out);
+
+/* ---- UUCP name resolution ---- */
+
+/*
+ * Look up a UUCP name from a user handle using HNameToUUCP() from
+ * cnet.library. Copies the result into buf (up to bufsz-1 chars).
+ * Returns buf on success, or NULL if not found or CNetBase is NULL.
+ */
+char *handle_to_uucp(char *buf, int bufsz, const char *handle);
+
+/*
+ * Look up a UUCP name from a user ID number using CNetIDToUUCP() from
+ * cnet.library. Same semantics as handle_to_uucp().
+ */
+char *id_to_uucp(char *buf, int bufsz, long userid);
+
+/*
+ * Classify an address string using CNetAddressType() from cnet.library.
+ * Returns the address type code, or 0 if CNetBase is NULL.
+ */
+int address_type(const char *addr);
+
+/* ---- CNet range functions ---- */
+
+/*
+ * Parse a range string using CNet's native range parser (cnet4.library).
+ * Supports CNet-style ranges: "1-5", "1,3,5-10".
+ * Caller must handle "all" before calling this.
+ *
+ * Falls back to simple N or N-M custom parser if CNet4Base is NULL.
+ *
+ * Initializes the RangeContext for iteration. Returns the first value,
+ * or -1 on parse error.
+ *
+ * min/max clamp the range to valid bounds.
+ */
+struct RangeContext;
+long parse_range_init(const char *range_str, long min, long max,
+    struct RangeContext *rctx);
+
+/*
+ * Get the next value from an initialized RangeContext.
+ * Returns the next value, or -1 if the range is exhausted.
+ */
+long parse_range_next(struct RangeContext *rctx);
+
+/*
+ * Check if a RangeContext has been exhausted.
+ * Returns 1 if no more values, 0 if more values remain.
+ */
+int parse_range_done(struct RangeContext *rctx);
 
 #endif /* CNET_CLI_UTIL_H */

@@ -32,4 +32,10 @@ int cmd_who_detail(struct MainPort *myp, int argc, char **argv);
 /* OLM command */
 int cmd_olm_send(struct MainPort *myp, int argc, char **argv);
 
+/* User index rebuild (used by maint pointers) */
+int rebuild_iname_index(struct MainPort *myp);
+int rebuild_iphone_index(struct MainPort *myp);
+int write_user_index_files(struct MainPort *myp,
+    int iname_count, int iphone_count);
+
 #endif /* CNET_CLI_USER_H */

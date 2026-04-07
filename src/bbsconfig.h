@@ -13,5 +13,8 @@
 struct MainPort;
 
 int cmd_config_show(struct MainPort *myp, int argc, char **argv);
+int cmd_config_flags(struct MainPort *myp, int argc, char **argv);
+int cmd_config_reload_text(struct MainPort *myp, int argc, char **argv);
+int cmd_config_port(struct MainPort *myp, int argc, char **argv);
 
 #endif /* CNET_CLI_BBSCONFIG_H */

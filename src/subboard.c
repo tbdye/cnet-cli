@@ -81,18 +81,31 @@ static void emit_sub_detail(struct json_state *js,
     struct SubboardType4 *sub)
 {
     char abuf[16];
+    char fbuf[128];
 
     json_kv_bool(js, "subdirectory", (int)sub->Subdirectory);
     json_kv_bool(js, "closed", (int)sub->Closed);
     json_kv_int(js, "max_items", (long)sub->MaxItems);
+
+    /* Access fields with human-readable group expansions */
+    json_kv_str(js, "access_groups",
+        expand_flags_string(fbuf, sizeof(fbuf), sub->Access));
     json_kv_str(js, "post_access",
         format_access(abuf, sizeof(abuf), (unsigned long)sub->PostAccess));
+    json_kv_str(js, "post_access_groups",
+        expand_flags_string(fbuf, sizeof(fbuf), sub->PostAccess));
     json_kv_str(js, "respond_access",
         format_access(abuf, sizeof(abuf), (unsigned long)sub->RespondAccess));
+    json_kv_str(js, "respond_access_groups",
+        expand_flags_string(fbuf, sizeof(fbuf), sub->RespondAccess));
     json_kv_str(js, "upload_access",
         format_access(abuf, sizeof(abuf), (unsigned long)sub->UploadAccess));
+    json_kv_str(js, "upload_access_groups",
+        expand_flags_string(fbuf, sizeof(fbuf), sub->UploadAccess));
     json_kv_str(js, "download_access",
         format_access(abuf, sizeof(abuf), (unsigned long)sub->DownloadAccess));
+    json_kv_str(js, "download_access_groups",
+        expand_flags_string(fbuf, sizeof(fbuf), sub->DownloadAccess));
     json_kv_bool(js, "real_names", (int)sub->RealNames);
     json_kv_bool(js, "anonymous", (int)sub->Anonymous);
     json_kv_bool(js, "private_area", (int)sub->PrivateArea);
@@ -104,7 +117,7 @@ static void emit_sub_detail(struct json_state *js,
         format_access(abuf, sizeof(abuf), (unsigned long)sub->Arcs));
     json_kv_int(js, "subvalid", sub->subvalid);
 
-    /* Sub-operator IDs and account numbers (M-6) */
+    /* Sub-operator IDs and account numbers */
     {
         int i;
         json_key(js, "subop_ids");
@@ -120,7 +133,72 @@ static void emit_sub_detail(struct json_state *js,
         json_arr_close(js);
     }
 
-    /* Activity dates (M-7) */
+    /* Access restriction fields */
+    /* Hours and BaudHours are hour-slot bitmasks (0-23), NOT access
+     * groups. They must NOT get ExpandFlags treatment. */
+    json_kv_str(js, "hours",
+        format_access(abuf, sizeof(abuf), (unsigned long)sub->Hours));
+    json_kv_str(js, "baud_hours",
+        format_access(abuf, sizeof(abuf), (unsigned long)sub->BaudHours));
+    json_kv_str(js, "hour_access",
+        format_access(abuf, sizeof(abuf), (unsigned long)sub->HourAccess));
+    json_kv_str(js, "hour_access_groups",
+        expand_flags_string(fbuf, sizeof(fbuf), sub->HourAccess));
+    json_kv_str(js, "hour_union_flags",
+        format_access(abuf, sizeof(abuf),
+            (unsigned long)sub->HourUnionFlags));
+    json_kv_str(js, "hour_union_flags_groups",
+        expand_flags_string(fbuf, sizeof(fbuf), sub->HourUnionFlags));
+    json_kv_str(js, "union_flags",
+        format_access(abuf, sizeof(abuf),
+            (unsigned long)sub->UnionFlags));
+    json_kv_str(js, "union_flags_groups",
+        expand_flags_string(fbuf, sizeof(fbuf), sub->UnionFlags));
+    json_kv_int(js, "baud", sub->Baud);
+    {
+        const char *g = "any";
+        if (sub->Gender == 'M') g = "M";
+        else if (sub->Gender == 'F') g = "F";
+        json_kv_str(js, "gender", g);
+    }
+    json_kv_int(js, "youngest", (long)sub->Youngest);
+    json_kv_int(js, "inactive_days", (long)sub->InactiveDays);
+    json_kv_int(js, "free_days", (long)sub->FreeDays);
+    json_kv_int(js, "min_free_bytes", sub->MinFreeBytes);
+    json_kv_int(js, "time_credit", (long)sub->MTimeCredit);
+
+    /* Boolean flags */
+    json_kv_bool(js, "verification", (int)sub->Verification);
+    json_kv_bool(js, "dup_check", (int)sub->DupCheck);
+    json_kv_bool(js, "show_unvalidated", (int)sub->ShowUnvalidated);
+    json_kv_bool(js, "no_signatures", (int)sub->NoSignatures);
+    json_kv_bool(js, "no_read_charges", (int)sub->NoReadCharges);
+    json_kv_bool(js, "no_write_charges", (int)sub->NoWriteCharges);
+    json_kv_bool(js, "invitation", (int)sub->Invitation);
+    json_kv_bool(js, "user_must_join", (int)sub->UserMustJoin);
+    json_kv_bool(js, "delete_own", (int)sub->DeleteOwn);
+    json_kv_bool(js, "carbon_copy", (int)sub->CarbonCopy);
+    json_kv_bool(js, "cdrom", (int)sub->CDROM);
+    json_kv_bool(js, "qwk_replies", (int)sub->QWKReplies);
+    json_kv_bool(js, "persist", (int)sub->Persist);
+    json_kv_bool(js, "delay", (int)sub->Delay);
+    json_kv_bool(js, "diz_save", (int)sub->DizSave);
+
+    /* Obits bitfield */
+    json_kv_str(js, "obits",
+        format_access(abuf, sizeof(abuf), (unsigned long)sub->obits));
+    json_kv_bool(js, "obit_showbows",
+        (sub->obits & OFF_SHOWBOWS) ? 1 : 0);
+    json_kv_bool(js, "obit_diz_alnum",
+        (sub->obits & OFF_DIZALNUM) ? 1 : 0);
+    json_kv_bool(js, "obit_diz_strip_chars",
+        (sub->obits & OFF_DIZSTRIPCHARS) ? 1 : 0);
+    json_kv_bool(js, "obit_diz_strip_text",
+        (sub->obits & OFF_DIZSTRIPTEXT) ? 1 : 0);
+    json_kv_bool(js, "obit_diz_strip_cr",
+        (sub->obits & OFF_DIZSTRIPCR) ? 1 : 0);
+
+    /* Activity dates */
     {
         char datebuf[20];
         if (is_null_date(&sub->LastUpload))
@@ -775,7 +853,7 @@ int cmd_sub_create(struct MainPort *myp, int argc, char **argv)
     if (!title || !gokey || !type_str || !parent_str) {
         json_error("Usage: sub create --title <t> --go <key> "
             "--type <type> --parent <id|gokey> "
-            "[--data-path <path>] [--access <hex>] [--max-items N]");
+            "[--data-path <path>] [--access <hex|groups>] [--max-items N]");
         return 1;
     }
 
@@ -787,10 +865,11 @@ int cmd_sub_create(struct MainPort *myp, int argc, char **argv)
         return 1;
     }
 
-    /* Parse optional access */
+    /* Parse optional access (hex or group string like "1-3,5") */
     if (access_str) {
-        if (!parse_hex_access(access_str, &access_val)) {
-            json_error("Invalid --access (use hex, e.g. 0xFFFFFFFF)");
+        if (!convert_access_string(access_str, &access_val)) {
+            json_error("Invalid --access value "
+                "(hex or group string like '1-3,5')");
             return 1;
         }
     }
@@ -1019,13 +1098,41 @@ int cmd_sub_edit(struct MainPort *myp, int argc, char **argv)
     if (argc < 2) {
         json_error("Usage: sub edit <id|gokey> [--title <t>] "
             "[--go <key>] [--type <type>] [--data-path <path>] "
-            "[--access <hex>] [--post-access <hex>] "
-            "[--respond-access <hex>] [--upload-access <hex>] "
-            "[--download-access <hex>] [--max-items N] "
+            "[--access <hex|groups>] [--post-access <hex|groups>] "
+            "[--respond-access <hex|groups>] "
+            "[--upload-access <hex|groups>] "
+            "[--download-access <hex|groups>] [--max-items N] "
             "[--closed true|false] [--real-names true|false] "
             "[--anonymous true|false] [--private true|false] "
             "[--no-mci true|false] "
-            "[--computer-types <hex>] [--oldest N] [--arcs <hex>]");
+            "[--computer-types <hex>] [--oldest N] [--arcs <hex>] "
+            "[--hours <hex>] [--baud-hours <hex>] "
+            "[--hour-access <hex|groups>] "
+            "[--hour-union-flags <hex|groups>] "
+            "[--union-flags <hex|groups>] [--baud N] "
+            "[--gender any|M|F] [--youngest N] "
+            "[--inactive-days N] [--free-days N] "
+            "[--min-free-bytes N] [--time-credit N] "
+            "[--verification true|false] "
+            "[--dup-check true|false] "
+            "[--show-unvalidated true|false] "
+            "[--no-signatures true|false] "
+            "[--no-read-charges true|false] "
+            "[--no-write-charges true|false] "
+            "[--invitation true|false] "
+            "[--user-must-join true|false] "
+            "[--delete-own true|false] "
+            "[--carbon-copy true|false] "
+            "[--cdrom true|false] "
+            "[--qwk-replies true|false] "
+            "[--persist true|false] "
+            "[--delay true|false] "
+            "[--diz-save true|false] "
+            "[--obit-showbows true|false] "
+            "[--obit-diz-alnum true|false] "
+            "[--obit-diz-strip-chars true|false] "
+            "[--obit-diz-strip-text true|false] "
+            "[--obit-diz-strip-cr true|false]");
         return 1;
     }
 
@@ -1088,9 +1195,10 @@ int cmd_sub_edit(struct MainPort *myp, int argc, char **argv)
                    i + 1 < argc) {
             unsigned long v;
             i++;
-            if (!parse_hex_access(argv[i], &v)) {
+            if (!convert_access_string(argv[i], &v)) {
                 ReleaseSemaphore(&myp->SEM[5]);
-                json_error("Invalid --access hex value");
+                json_error("Invalid --access value "
+                    "(hex or group string like '1-3,5')");
                 return 1;
             }
             sub->Access = (long)v;
@@ -1099,9 +1207,10 @@ int cmd_sub_edit(struct MainPort *myp, int argc, char **argv)
                    i + 1 < argc) {
             unsigned long v;
             i++;
-            if (!parse_hex_access(argv[i], &v)) {
+            if (!convert_access_string(argv[i], &v)) {
                 ReleaseSemaphore(&myp->SEM[5]);
-                json_error("Invalid --post-access hex value");
+                json_error("Invalid --post-access value "
+                    "(hex or group string like '1-3,5')");
                 return 1;
             }
             sub->PostAccess = (long)v;
@@ -1110,9 +1219,10 @@ int cmd_sub_edit(struct MainPort *myp, int argc, char **argv)
                    i + 1 < argc) {
             unsigned long v;
             i++;
-            if (!parse_hex_access(argv[i], &v)) {
+            if (!convert_access_string(argv[i], &v)) {
                 ReleaseSemaphore(&myp->SEM[5]);
-                json_error("Invalid --respond-access hex value");
+                json_error("Invalid --respond-access value "
+                    "(hex or group string like '1-3,5')");
                 return 1;
             }
             sub->RespondAccess = (long)v;
@@ -1121,9 +1231,10 @@ int cmd_sub_edit(struct MainPort *myp, int argc, char **argv)
                    i + 1 < argc) {
             unsigned long v;
             i++;
-            if (!parse_hex_access(argv[i], &v)) {
+            if (!convert_access_string(argv[i], &v)) {
                 ReleaseSemaphore(&myp->SEM[5]);
-                json_error("Invalid --upload-access hex value");
+                json_error("Invalid --upload-access value "
+                    "(hex or group string like '1-3,5')");
                 return 1;
             }
             sub->UploadAccess = (long)v;
@@ -1132,9 +1243,10 @@ int cmd_sub_edit(struct MainPort *myp, int argc, char **argv)
                    i + 1 < argc) {
             unsigned long v;
             i++;
-            if (!parse_hex_access(argv[i], &v)) {
+            if (!convert_access_string(argv[i], &v)) {
                 ReleaseSemaphore(&myp->SEM[5]);
-                json_error("Invalid --download-access hex value");
+                json_error("Invalid --download-access value "
+                    "(hex or group string like '1-3,5')");
                 return 1;
             }
             sub->DownloadAccess = (long)v;
@@ -1225,6 +1337,300 @@ int cmd_sub_edit(struct MainPort *myp, int argc, char **argv)
                 return 1;
             }
             sub->Arcs = (long)v;
+            changed = 1;
+
+        /* Hex bitmask fields */
+        } else if (strcmp(argv[i], "--hours") == 0 &&
+                   i + 1 < argc) {
+            unsigned long v;
+            i++;
+            if (!parse_hex_access(argv[i], &v)) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --hours hex value");
+                return 1;
+            }
+            sub->Hours = (long)v;
+            changed = 1;
+        } else if (strcmp(argv[i], "--baud-hours") == 0 &&
+                   i + 1 < argc) {
+            unsigned long v;
+            i++;
+            if (!parse_hex_access(argv[i], &v)) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --baud-hours hex value");
+                return 1;
+            }
+            sub->BaudHours = (long)v;
+            changed = 1;
+        } else if (strcmp(argv[i], "--hour-access") == 0 &&
+                   i + 1 < argc) {
+            unsigned long v;
+            i++;
+            if (!convert_access_string(argv[i], &v)) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --hour-access value "
+                    "(hex or group string like '1-3,5')");
+                return 1;
+            }
+            sub->HourAccess = (long)v;
+            changed = 1;
+        } else if (strcmp(argv[i], "--hour-union-flags") == 0 &&
+                   i + 1 < argc) {
+            unsigned long v;
+            i++;
+            if (!convert_access_string(argv[i], &v)) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --hour-union-flags value "
+                    "(hex or group string like '1-3,5')");
+                return 1;
+            }
+            sub->HourUnionFlags = (long)v;
+            changed = 1;
+        } else if (strcmp(argv[i], "--union-flags") == 0 &&
+                   i + 1 < argc) {
+            unsigned long v;
+            i++;
+            if (!convert_access_string(argv[i], &v)) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --union-flags value "
+                    "(hex or group string like '1-3,5')");
+                return 1;
+            }
+            sub->UnionFlags = (long)v;
+            changed = 1;
+
+        /* Integer fields */
+        } else if (strcmp(argv[i], "--baud") == 0 &&
+                   i + 1 < argc) {
+            long v;
+            i++;
+            v = atol(argv[i]);
+            if (v < 0) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --baud value (must be >= 0)");
+                return 1;
+            }
+            sub->Baud = v;
+            changed = 1;
+        } else if (strcmp(argv[i], "--youngest") == 0 &&
+                   i + 1 < argc) {
+            long v;
+            i++;
+            v = atol(argv[i]);
+            if (v < 0 || v > 255) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --youngest value (must be 0-255)");
+                return 1;
+            }
+            sub->Youngest = (UBYTE)v;
+            changed = 1;
+        } else if (strcmp(argv[i], "--inactive-days") == 0 &&
+                   i + 1 < argc) {
+            long v;
+            i++;
+            v = atol(argv[i]);
+            if (v < 0 || v > 32767) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --inactive-days value "
+                    "(must be 0-32767)");
+                return 1;
+            }
+            sub->InactiveDays = (short)v;
+            changed = 1;
+        } else if (strcmp(argv[i], "--free-days") == 0 &&
+                   i + 1 < argc) {
+            long v;
+            i++;
+            v = atol(argv[i]);
+            if (v < 0 || v > 32767) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --free-days value "
+                    "(must be 0-32767)");
+                return 1;
+            }
+            sub->FreeDays = (short)v;
+            changed = 1;
+        } else if (strcmp(argv[i], "--min-free-bytes") == 0 &&
+                   i + 1 < argc) {
+            long v;
+            i++;
+            v = atol(argv[i]);
+            if (v < 0) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --min-free-bytes value "
+                    "(must be >= 0)");
+                return 1;
+            }
+            sub->MinFreeBytes = v;
+            changed = 1;
+        } else if (strcmp(argv[i], "--time-credit") == 0 &&
+                   i + 1 < argc) {
+            long v;
+            i++;
+            v = atol(argv[i]);
+            if (v < 0 || v > 100) {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --time-credit value "
+                    "(must be 0-100)");
+                return 1;
+            }
+            sub->MTimeCredit = (short)v;
+            changed = 1;
+
+        /* Gender restriction field */
+        } else if (strcmp(argv[i], "--gender") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            if (strcmp(argv[i], "any") == 0 ||
+                strcmp(argv[i], "0") == 0 ||
+                strcmp(argv[i], "none") == 0) {
+                sub->Gender = 0;
+            } else if (strcmp(argv[i], "M") == 0 ||
+                       strcmp(argv[i], "m") == 0) {
+                sub->Gender = 'M';
+            } else if (strcmp(argv[i], "F") == 0 ||
+                       strcmp(argv[i], "f") == 0) {
+                sub->Gender = 'F';
+            } else {
+                ReleaseSemaphore(&myp->SEM[5]);
+                json_error("Invalid --gender value "
+                    "(use any, M, or F)");
+                return 1;
+            }
+            changed = 1;
+
+        /* Boolean flags */
+        } else if (strcmp(argv[i], "--verification") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->Verification = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--dup-check") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->DupCheck = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--show-unvalidated") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->ShowUnvalidated = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--no-signatures") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->NoSignatures = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--no-read-charges") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->NoReadCharges = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--no-write-charges") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->NoWriteCharges = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--invitation") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->Invitation = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--user-must-join") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->UserMustJoin = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--delete-own") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->DeleteOwn = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--carbon-copy") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->CarbonCopy = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--cdrom") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->CDROM = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--qwk-replies") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->QWKReplies = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--persist") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->Persist = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--delay") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->Delay = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+        } else if (strcmp(argv[i], "--diz-save") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            sub->DizSave = (strcmp(argv[i], "true") == 0)
+                ? 1 : 0;
+            changed = 1;
+
+        /* Obits bitfield flags */
+        } else if (strcmp(argv[i], "--obit-showbows") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            if (strcmp(argv[i], "true") == 0)
+                sub->obits |= OFF_SHOWBOWS;
+            else
+                sub->obits &= ~OFF_SHOWBOWS;
+            changed = 1;
+        } else if (strcmp(argv[i], "--obit-diz-alnum") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            if (strcmp(argv[i], "true") == 0)
+                sub->obits |= OFF_DIZALNUM;
+            else
+                sub->obits &= ~OFF_DIZALNUM;
+            changed = 1;
+        } else if (strcmp(argv[i], "--obit-diz-strip-chars") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            if (strcmp(argv[i], "true") == 0)
+                sub->obits |= OFF_DIZSTRIPCHARS;
+            else
+                sub->obits &= ~OFF_DIZSTRIPCHARS;
+            changed = 1;
+        } else if (strcmp(argv[i], "--obit-diz-strip-text") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            if (strcmp(argv[i], "true") == 0)
+                sub->obits |= OFF_DIZSTRIPTEXT;
+            else
+                sub->obits &= ~OFF_DIZSTRIPTEXT;
+            changed = 1;
+        } else if (strcmp(argv[i], "--obit-diz-strip-cr") == 0 &&
+                   i + 1 < argc) {
+            i++;
+            if (strcmp(argv[i], "true") == 0)
+                sub->obits |= OFF_DIZSTRIPCR;
+            else
+                sub->obits &= ~OFF_DIZSTRIPCR;
             changed = 1;
         }
     }
@@ -1516,5 +1922,71 @@ int cmd_sub_delete(struct MainPort *myp, int argc, char **argv)
     json_finish(&js);
 
     ReleaseSemaphore(&myp->SEM[5]);
+    return 0;
+}
+
+/* ---- sub disk-usage ---- */
+
+int cmd_sub_disk_usage(struct MainPort *myp, int argc, char **argv)
+{
+    struct json_state js;
+    short physnum;
+    char path_buf[200];
+    char title_buf[128];
+    char gokey_buf[128];
+    ULONG bytes;
+
+    if (argc < 2) {
+        json_error("Usage: cnet-cli sub disk-usage <id|gokey>");
+        return 1;
+    }
+
+    if (!CNetBase) {
+        json_error("cnet.library not available");
+        return 1;
+    }
+
+    physnum = resolve_subboard(myp, argv[1]);
+    if (physnum < 0) {
+        json_error("Subboard not found");
+        return 1;
+    }
+
+    /* Copy DataPath, Title, SubDirName under SEM[5] shared lock. */
+    ObtainSemaphoreShared(&myp->SEM[5]);
+
+    if (physnum >= (short)myp->ns) {
+        ReleaseSemaphore(&myp->SEM[5]);
+        json_error("Subboard number out of range");
+        return 1;
+    }
+
+    safe_strcpy(path_buf, myp->Subboard[physnum].DataPath,
+        (int)sizeof(path_buf));
+    strip_mci(title_buf, (int)sizeof(title_buf),
+        myp->Subboard[physnum].Title);
+    strip_mci(gokey_buf, (int)sizeof(gokey_buf),
+        myp->Subboard[physnum].SubDirName);
+
+    ReleaseSemaphore(&myp->SEM[5]);
+
+    if (path_buf[0] == '\0') {
+        json_error("Subboard has no data path");
+        return 1;
+    }
+
+    /* DirectorySize(path, 0) recursively totals all file sizes. */
+    bytes = DirectorySize(path_buf, (BPTR)0);
+
+    json_init(&js, stdout);
+    json_obj_open(&js);
+    json_kv_int(&js, "physnum", (long)physnum);
+    json_kv_str(&js, "title", title_buf);
+    json_kv_str(&js, "go_key", gokey_buf);
+    json_kv_str(&js, "data_path", path_buf);
+    json_kv_uint(&js, "bytes", (unsigned long)bytes);
+    json_obj_close(&js);
+    json_finish(&js);
+
     return 0;
 }
